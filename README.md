@@ -1,3 +1,5 @@
+NOTE: See https://twitter.com/SaraMG/status/282151648237858817
+
 ```
 git clone https://github.com/patcon/vagrant-hiphop-drupal.git
 cd vagrant-hiphop-drupal
