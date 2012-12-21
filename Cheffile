@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+#^syntax detection
+
+site 'http://community.opscode.com/api/v1'
+
+cookbook 'apt'
+cookbook "drush",
+  :git => "https://github.com/msonnabaum/chef-drush.git",
+  :ref => "master"
+cookbook 'mysql'
+cookbook 'php'

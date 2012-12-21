@@ -1,0 +1,30 @@
+SITE
+  remote: http://community.opscode.com/api/v1
+  specs:
+    apt (1.7.0)
+    build-essential (1.3.2)
+    mysql (2.1.0)
+      build-essential (>= 0.0.0)
+      openssl (>= 0.0.0)
+    openssl (1.0.0)
+    php (1.1.2)
+      build-essential (>= 0.0.0)
+      mysql (>= 0.0.0)
+      xml (>= 0.0.0)
+    xml (1.1.2)
+      build-essential (>= 0.0.0)
+
+GIT
+  remote: https://github.com/msonnabaum/chef-drush.git
+  ref: master
+  sha: 0753dfb106102da0fed54945b2df6f3811b6d93f
+  specs:
+    drush (0.10.0)
+      php (>= 0.0.0)
+
+DEPENDENCIES
+  apt (>= 0)
+  drush (>= 0)
+  mysql (>= 0)
+  php (>= 0)
+
