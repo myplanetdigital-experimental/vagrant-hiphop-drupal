@@ -3,4 +3,6 @@ apt_repository "hiphop-php" do
   components ["precise", "main"]
 end
 
-package "hiphop-php"
+package "hiphop-php" do
+  options "--force-yes"
+end
