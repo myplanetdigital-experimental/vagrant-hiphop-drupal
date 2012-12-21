@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+RUBY_VERS="1.9.3"
+RUBY_PATCH="p194"
+
+# Work whether rubies or gemsets are already installed
+rvm --install use ruby-${RUBY_VERS}-${RUBY_PATCH}
