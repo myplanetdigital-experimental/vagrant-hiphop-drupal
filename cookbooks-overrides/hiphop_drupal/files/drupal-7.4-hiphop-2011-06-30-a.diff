@@ -1,0 +1,2194 @@
+diff -uNr drupal-7.4.org/authorize.php drupal-7.4/authorize.php
+--- drupal-7.4.org/authorize.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/authorize.php	2011-06-30 09:24:40.096730378 -0400
+@@ -145,7 +145,7 @@
+         l(t('Front page'), '<front>'),
+       ));
+     }
+-	
++    
+     $output .= theme('item_list', array('items' => $links, 'title' => t('Next steps')));
+   }
+   // If a batch is running, let it run.
+diff -uNr drupal-7.4.org/includes/actions.inc drupal-7.4/includes/actions.inc
+--- drupal-7.4.org/includes/actions.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/actions.inc	2011-06-30 09:24:40.116593941 -0400
+@@ -85,7 +85,7 @@
+       $query->addField('actions', 'callback');
+       $query->addField('actions', 'parameters');
+       $query->condition('aid', $conditions, 'IN');
+-      $result = $query->execute();
++      $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+       foreach ($result as $action) {
+         $actions[$action->aid] = $action->parameters ? unserialize($action->parameters) : array();
+         $actions[$action->aid]['callback'] = $action->callback;
+diff -uNr drupal-7.4.org/includes/bootstrap.inc drupal-7.4/includes/bootstrap.inc
+--- drupal-7.4.org/includes/bootstrap.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/bootstrap.inc	2011-06-30 09:24:40.121512073 -0400
+@@ -2665,10 +2665,12 @@
+ function _registry_check_code($type, $name = NULL) {
+   static $lookup_cache, $cache_update_needed;
+ 
+-  if ($type == 'class' && class_exists($name) || $type == 'interface' && interface_exists($name)) {
+-    return TRUE;
++  if(!preg_match('~\.hiphop$~', PHP_VERSION)) {
++    // this isn't Facebook's HipHop for PHP mode
++    if ($type == 'class' && class_exists($name) || $type == 'interface' && interface_exists($name)) {
++      return TRUE;
++    }
+   }
+-
+   if (!isset($lookup_cache)) {
+     $lookup_cache = array();
+     if ($cache = cache_get('lookup_cache', 'cache_bootstrap')) {
+diff -uNr drupal-7.4.org/includes/cache.inc drupal-7.4/includes/cache.inc
+--- drupal-7.4.org/includes/cache.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/cache.inc	2011-06-30 09:24:40.123505550 -0400
+@@ -332,7 +332,7 @@
+       // is used here only due to the performance overhead we would incur
+       // otherwise. When serving an uncached page, the overhead of using
+       // db_select() is a much smaller proportion of the request.
+-      $result = db_query('SELECT cid, data, created, expire, serialized FROM {' . db_escape_table($this->bin) . '} WHERE cid IN (:cids)', array(':cids' => $cids));
++      $result = db_query('SELECT cid, data, created, expire, serialized FROM {' . db_escape_table($this->bin) . '} WHERE cid IN (:cids)', array(':cids' => $cids))->fetchAll(PDO::FETCH_OBJ);
+       $cache = array();
+       foreach ($result as $item) {
+         $item = $this->prepareItem($item);
+diff -uNr drupal-7.4.org/includes/common.inc drupal-7.4/includes/common.inc
+--- drupal-7.4.org/includes/common.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/common.inc	2011-06-30 09:24:40.145842020 -0400
+@@ -1082,7 +1082,11 @@
+  *   TRUE if the address is in a valid format.
+  */
+ function valid_email_address($mail) {
+-  return (bool)filter_var($mail, FILTER_VALIDATE_EMAIL);
++  if(preg_match('~\.hiphop$~', PHP_VERSION)) {
++    return (bool)preg_match('~^[\w\-\+\&\*]+(?:\.[\w\-\_\+\&\*]+)*@(?:[\w-]+\.)+[a-zA-Z]{2,7}$~', $mail); // OWASP validation pattern
++  } else {
++    return (bool)filter_var($mail, FILTER_VALIDATE_EMAIL);
++  }
+ }
+ 
+ /**
+@@ -6130,7 +6134,7 @@
+   $children = array();
+   $sortable = FALSE;
+   foreach ($elements as $key => $value) {
+-    if ($key === '' || $key[0] !== '#') {
++    if ($key === '' || is_numeric($key) || $key[0] !== '#') {
+       $children[$key] = $value;
+       if (is_array($value) && isset($value['#weight'])) {
+         $sortable = TRUE;
+diff -uNr drupal-7.4.org/includes/database/database.inc drupal-7.4/includes/database/database.inc
+--- drupal-7.4.org/includes/database/database.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/database/database.inc	2011-06-30 09:24:40.150529727 -0400
+@@ -194,7 +194,7 @@
+ 
+   /**
+    * The key representing this connection.
+-   * 
++   *
+    * The key is a unique string which identifies a database connection. A
+    * connection can be a single server or a cluster of master and slaves (use
+    * target to pick between master and slave).
+@@ -2133,8 +2133,8 @@
+         $this->setFetchMode($fetch);
+       }
+     }
+-
+-    foreach ($this as $record) {
++    $x = $this->fetchAll();
++    foreach ($x as $record) {
+       $record_key = is_object($record) ? $record->$key : $record[$key];
+       $return[$record_key] = $record;
+     }
+@@ -2145,7 +2145,8 @@
+   public function fetchAllKeyed($key_index = 0, $value_index = 1) {
+     $return = array();
+     $this->setFetchMode(PDO::FETCH_NUM);
+-    foreach ($this as $record) {
++    $x = $this->fetchAll(PDO::FETCH_NUM);
++    foreach ($x as $record) {
+       $return[$record[$key_index]] = $record[$value_index];
+     }
+     return $return;
+diff -uNr drupal-7.4.org/includes/file.inc drupal-7.4/includes/file.inc
+--- drupal-7.4.org/includes/file.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/file.inc	2011-06-30 09:24:40.153553413 -0400
+@@ -134,7 +134,11 @@
+       $wrappers[$scheme] += array('type' => STREAM_WRAPPERS_NORMAL);
+     }
+     drupal_alter('stream_wrappers', $wrappers);
+-    $existing = stream_get_wrappers();
++    if(preg_match('~\.hiphop$~', PHP_VERSION)) {
++      $existing = array('http', 'file');
++    } else {
++      $existing = stream_get_wrappers();
++    }
+     foreach ($wrappers as $scheme => $info) {
+       // We only register classes that implement our interface.
+       if (in_array('DrupalStreamWrapperInterface', class_implements($info['class']), TRUE)) {
+@@ -615,7 +619,7 @@
+     ->fields('f', array('module', 'type', 'id', 'count'))
+     ->condition('fid', $file->fid)
+     ->condition('count', 0, '>')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   $references = array();
+   foreach ($result as $usage) {
+     $references[$usage->module][$usage->type] = array('id' => $usage->id, 'count' => $usage->count);
+diff -uNr drupal-7.4.org/includes/install.inc drupal-7.4/includes/install.inc
+--- drupal-7.4.org/includes/install.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/install.inc	2011-06-30 09:24:40.156497543 -0400
+@@ -147,7 +147,7 @@
+ 
+   if (!$versions) {
+     $versions = array();
+-    $result = db_query("SELECT name, schema_version FROM {system} WHERE type = :type", array(':type' => 'module'));
++    $result = db_query("SELECT name, schema_version FROM {system} WHERE type = :type", array(':type' => 'module'))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $row) {
+       $versions[$row->name] = $row->schema_version;
+     }
+diff -uNr drupal-7.4.org/includes/locale.inc drupal-7.4/includes/locale.inc
+--- drupal-7.4.org/includes/locale.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/locale.inc	2011-06-30 09:29:11.309414881 -0400
+@@ -1466,10 +1466,10 @@
+  */
+ function _locale_export_get_strings($language = NULL, $group = 'default') {
+   if (isset($language)) {
+-    $result = db_query("SELECT s.lid, s.source, s.context, s.location, t.translation, t.plid, t.plural FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.textgroup = :textgroup ORDER BY t.plid, t.plural", array(':language' => $language->language, ':textgroup' => $group));
++    $result = db_query("SELECT s.lid, s.source, s.context, s.location, t.translation, t.plid, t.plural FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.textgroup = :textgroup ORDER BY t.plid, t.plural", array(':language' => $language->language, ':textgroup' => $group))->fetchAll(PDO::FETCH_OBJ);
+   }
+   else {
+-    $result = db_query("SELECT s.lid, s.source, s.context, s.location, t.plid, t.plural FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid WHERE s.textgroup = :textgroup ORDER BY t.plid, t.plural", array(':textgroup' => $group));
++    $result = db_query("SELECT s.lid, s.source, s.context, s.location, t.plid, t.plural FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid WHERE s.textgroup = :textgroup ORDER BY t.plid, t.plural", array(':textgroup' => $group))->fetchAll(PDO::FETCH_OBJ);
+   }
+   $strings = array();
+   foreach ($result as $child) {
+@@ -1755,7 +1755,7 @@
+   }
+ 
+   $sql_query = $sql_query->extend('PagerDefault')->limit(50);
+-  $locales = $sql_query->execute();
++  $locales = $sql_query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $groups = module_invoke_all('locale', 'groups');
+   $header = array(t('Text group'), t('String'), t('Context'), ($limit_language) ? t('Language') : t('Languages'), array('data' => t('Operations'), 'colspan' => '2'));
+@@ -1863,7 +1863,7 @@
+ 
+   // Construct the array for JavaScript translations.
+   // Only add strings with a translation to the translations array.
+-  $result = db_query("SELECT s.lid, s.source, t.translation FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.location LIKE '%.js%' AND s.textgroup = :textgroup", array(':language' => $language->language, ':textgroup' => 'default'));
++  $result = db_query("SELECT s.lid, s.source, t.translation FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.location LIKE '%.js%' AND s.textgroup = :textgroup", array(':language' => $language->language, ':textgroup' => 'default'))->fetchAll(PDO::FETCH_OBJ);
+ 
+   $translations = array();
+   foreach ($result as $data) {
+@@ -2065,7 +2065,7 @@
+   if (count($skip)) {
+     $query->condition('name', $skip, 'NOT IN');
+   }
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $component) {
+     // Collect all files for all components, names as $langcode.po or
+     // with names ending with $langcode.po. This allows for filenames
+@@ -2097,7 +2097,7 @@
+   if (count($languages[1])) {
+     $language_list = join('|', array_keys($languages[1]));
+     // Collect all files to import for all $components.
+-    $result = db_query("SELECT name, filename FROM {system} WHERE status = 1");
++    $result = db_query("SELECT name, filename FROM {system} WHERE status = 1")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $component) {
+       if (in_array($component->name, $components)) {
+         // Collect all files for this component in all enabled languages, named
+diff -uNr drupal-7.4.org/includes/menu.inc drupal-7.4/includes/menu.inc
+--- drupal-7.4.org/includes/menu.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/menu.inc	2011-06-30 09:24:40.166493036 -0400
+@@ -1234,7 +1234,7 @@
+                 ->condition('has_children', 1)
+                 ->condition('plid', $parents, 'IN')
+                 ->condition('mlid', $parents, 'NOT IN')
+-                ->execute();
++                ->execute()->fetchAll(PDO::FETCH_ASSOC);
+               $num_rows = FALSE;
+               foreach ($result as $item) {
+                 $parents[$item['mlid']] = $item['mlid'];
+@@ -1369,7 +1369,7 @@
+ 
+     // Build an ordered array of links using the query result object.
+     $links = array();
+-    foreach ($query->execute() as $item) {
++    foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $item) {
+       $links[] = $item;
+     }
+     $active_trail = (isset($parameters['active_trail']) ? $parameters['active_trail'] : array());
+@@ -1853,7 +1853,7 @@
+       ->condition('context', MENU_CONTEXT_INLINE, '<>')
+       ->orderBy('weight')
+       ->orderBy('title')
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_ASSOC);
+     $map = $router_item['original_map'];
+     $children = array();
+     $tasks = array();
+@@ -2289,6 +2289,7 @@
+       // a stripped down menu tree containing the active trail only, in case
+       // the given menu has not been built in this request yet.
+       $tree = menu_tree_page_data($preferred_link['menu_name'], NULL, TRUE);
++      reset($tree);
+       list($key, $curr) = each($tree);
+     }
+     // There is no link for the current path.
+@@ -2318,6 +2319,7 @@
+           }
+         }
+         $tree = $curr['below'] ? $curr['below'] : array();
++        reset($tree);
+       }
+       list($key, $curr) = each($tree);
+     }
+@@ -2388,7 +2390,7 @@
+ 
+     // Sort candidates by link path and menu name.
+     $candidates = array();
+-    foreach ($query->execute() as $candidate) {
++    foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $candidate) {
+       $candidate['weight'] = $candidate['link_weight'];
+       $candidates[$candidate['link_path']][$candidate['menu_name']] = $candidate;
+     }
+@@ -2750,7 +2752,7 @@
+         ->condition('customized', 1)
+       )
+     )
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $item) {
+     $router_path = _menu_find_router_path($item['link_path']);
+     if (!empty($router_path) && ($router_path != $item['router_path'] || $item['updated'])) {
+@@ -2774,7 +2776,7 @@
+     ->condition('updated', 0)
+     ->condition('customized', 0)
+     ->orderBy('depth', 'DESC')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   // Remove all such items. Starting from those with the greatest depth will
+   // minimize the amount of re-parenting done by menu_link_delete().
+   foreach ($result as $item) {
+@@ -2866,7 +2868,7 @@
+     _menu_delete_item(db_query("SELECT * FROM {menu_links} WHERE mlid = :mlid", array(':mlid' => $mlid))->fetchAssoc());
+   }
+   else {
+-    $result = db_query("SELECT * FROM {menu_links} WHERE link_path = :link_path", array(':link_path' => $path));
++    $result = db_query("SELECT * FROM {menu_links} WHERE link_path = :link_path", array(':link_path' => $path))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $link) {
+       _menu_delete_item($link);
+     }
+@@ -2886,7 +2888,7 @@
+   if ($item && ($item['module'] != 'system' || $item['updated'] || $force)) {
+     // Children get re-attached to the item's parent.
+     if ($item['has_children']) {
+-      $result = db_query("SELECT mlid FROM {menu_links} WHERE plid = :plid", array(':plid' => $item['mlid']));
++      $result = db_query("SELECT mlid FROM {menu_links} WHERE plid = :plid", array(':plid' => $item['mlid']))->fetchAll(PDO::FETCH_OBJ);
+       foreach ($result as $m) {
+         $child = menu_link_load($m->mlid);
+         $child['plid'] = $item['plid'];
+diff -uNr drupal-7.4.org/includes/module.inc drupal-7.4/includes/module.inc
+--- drupal-7.4.org/includes/module.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/module.inc	2011-06-30 09:24:40.169513140 -0400
+@@ -162,7 +162,7 @@
+       // Drupal installations, which might have modules installed in different
+       // locations in the file system. The ordering here must also be
+       // consistent with the one used in module_implements().
+-      $result = db_query("SELECT * FROM {system} WHERE type = 'theme' OR (type = 'module' AND status = 1) ORDER BY weight ASC, name ASC");
++      $result = db_query("SELECT * FROM {system} WHERE type = 'theme' OR (type = 'module' AND status = 1) ORDER BY weight ASC, name ASC")->fetchAll(PDO::FETCH_OBJ);
+       foreach ($result as $record) {
+         $record->info = unserialize($record->info);
+         // Build a list of all enabled modules.
+diff -uNr drupal-7.4.org/includes/path.inc drupal-7.4/includes/path.inc
+--- drupal-7.4.org/includes/path.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/path.inc	2011-06-30 09:24:40.171502101 -0400
+@@ -377,7 +377,7 @@
+   // path it corresponds to. This is the portion of the path before the first
+   // '/', if present, otherwise the whole path itself.
+   $whitelist = array();
+-  $result = db_query("SELECT DISTINCT SUBSTRING_INDEX(source, '/', 1) AS path FROM {url_alias}");
++  $result = db_query("SELECT DISTINCT SUBSTRING_INDEX(source, '/', 1) AS path FROM {url_alias}")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $row) {
+     $whitelist[$row->path] = TRUE;
+   }
+diff -uNr drupal-7.4.org/includes/update.inc drupal-7.4/includes/update.inc
+--- drupal-7.4.org/includes/update.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/includes/update.inc	2011-06-30 09:24:40.175494076 -0400
+@@ -23,7 +23,7 @@
+  */
+ function update_fix_compatibility() {
+   $incompatible = array();
+-  $result = db_query("SELECT name, type, status FROM {system} WHERE status = 1 AND type IN ('module','theme')");
++  $result = db_query("SELECT name, type, status FROM {system} WHERE status = 1 AND type IN ('module','theme')")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $row) {
+     if (update_check_incompatibility($row->name, $row->type)) {
+       $incompatible[] = $row->name;
+@@ -395,7 +395,7 @@
+     ->orderBy('uid', 'ASC')
+     ->where('data IS NOT NULL')
+     ->range(0, $limit)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $row) {
+     $data = unserialize($row->data);
+     $user_needs_update = FALSE;
+diff -uNr drupal-7.4.org/modules/aggregator/aggregator.admin.inc drupal-7.4/modules/aggregator/aggregator.admin.inc
+--- drupal-7.4.org/modules/aggregator/aggregator.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/aggregator/aggregator.admin.inc	2011-06-30 09:24:40.181689111 -0400
+@@ -19,7 +19,7 @@
+  *   The page HTML.
+  */
+ function aggregator_view() {
+-  $result = db_query('SELECT f.fid, f.title, f.url, f.refresh, f.checked, f.link, f.description, f.hash, f.etag, f.modified, f.image, f.block, COUNT(i.iid) AS items FROM {aggregator_feed} f LEFT JOIN {aggregator_item} i ON f.fid = i.fid GROUP BY f.fid, f.title, f.url, f.refresh, f.checked, f.link, f.description, f.hash, f.etag, f.modified, f.image, f.block ORDER BY f.title');
++  $result = db_query('SELECT f.fid, f.title, f.url, f.refresh, f.checked, f.link, f.description, f.hash, f.etag, f.modified, f.image, f.block, COUNT(i.iid) AS items FROM {aggregator_feed} f LEFT JOIN {aggregator_item} i ON f.fid = i.fid GROUP BY f.fid, f.title, f.url, f.refresh, f.checked, f.link, f.description, f.hash, f.etag, f.modified, f.image, f.block ORDER BY f.title')->fetchAll(PDO::FETCH_OBJ);
+ 
+   $output = '<h3>' . t('Feed overview') . '</h3>';
+ 
+@@ -38,7 +38,7 @@
+   }
+   $output .= theme('table', array('header' => $header, 'rows' => $rows, 'empty' => t('No feeds available. <a href="@link">Add feed</a>.', array('@link' => url('admin/config/services/aggregator/add/feed')))));
+ 
+-  $result = db_query('SELECT c.cid, c.title, COUNT(ci.iid) as items FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid GROUP BY c.cid, c.title ORDER BY title');
++  $result = db_query('SELECT c.cid, c.title, COUNT(ci.iid) as items FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid GROUP BY c.cid, c.title ORDER BY title')->fetchAll(PDO::FETCH_OBJ);
+ 
+   $output .= '<h3>' . t('Category overview') . '</h3>';
+ 
+@@ -93,7 +93,7 @@
+   // Handling of categories.
+   $options = array();
+   $values = array();
+-  $categories = db_query('SELECT c.cid, c.title, f.fid FROM {aggregator_category} c LEFT JOIN {aggregator_category_feed} f ON c.cid = f.cid AND f.fid = :fid ORDER BY title', array(':fid' => isset($feed->fid) ? $feed->fid : NULL));
++  $categories = db_query('SELECT c.cid, c.title, f.fid FROM {aggregator_category} c LEFT JOIN {aggregator_category_feed} f ON c.cid = f.cid AND f.fid = :fid ORDER BY title', array(':fid' => isset($feed->fid) ? $feed->fid : NULL))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($categories as $category) {
+     $options[$category->cid] = check_plain($category->title);
+     if ($category->fid) $values[] = $category->cid;
+@@ -139,10 +139,10 @@
+     }
+     // Check for duplicate titles.
+     if (isset($form_state['values']['fid'])) {
+-      $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE (title = :title OR url = :url) AND fid <> :fid", array(':title' => $form_state['values']['title'], ':url' => $form_state['values']['url'], ':fid' => $form_state['values']['fid']));
++      $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE (title = :title OR url = :url) AND fid <> :fid", array(':title' => $form_state['values']['title'], ':url' => $form_state['values']['url'], ':fid' => $form_state['values']['fid']))->fetchAll(PDO::FETCH_OBJ);
+     }
+     else {
+-      $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE title = :title OR url = :url", array(':title' => $form_state['values']['title'], ':url' => $form_state['values']['url']));
++      $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE title = :title OR url = :url", array(':title' => $form_state['values']['title'], ':url' => $form_state['values']['url']))->fetchAll(PDO::FETCH_OBJ);
+     }
+     foreach ($result as $feed) {
+       if (strcasecmp($feed->title, $form_state['values']['title']) == 0) {
+@@ -326,7 +326,7 @@
+     }
+ 
+     // Check for duplicate titles or URLs.
+-    $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE title = :title OR url = :url", array(':title' => $feed['title'], ':url' => $feed['url']));
++    $result = db_query("SELECT title, url FROM {aggregator_feed} WHERE title = :title OR url = :url", array(':title' => $feed['title'], ':url' => $feed['url']))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $old) {
+       if (strcasecmp($old->title, $feed['title']) == 0) {
+         drupal_set_message(t('A feed named %title already exists.', array('%title' => $old->title)), 'warning');
+diff -uNr drupal-7.4.org/modules/aggregator/aggregator.module drupal-7.4/modules/aggregator/aggregator.module
+--- drupal-7.4.org/modules/aggregator/aggregator.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/aggregator/aggregator.module	2011-06-30 09:24:40.187525019 -0400
+@@ -309,7 +309,7 @@
+   $result = db_query('SELECT * FROM {aggregator_feed} WHERE queued = 0 AND checked + refresh < :time AND refresh <> :never', array(
+     ':time' => REQUEST_TIME,
+     ':never' => AGGREGATOR_CLEAR_NEVER
+-  ));
++  ))->fetchAll(PDO::FETCH_OBJ);
+   $queue = DrupalQueue::get('aggregator_feeds');
+   foreach ($result as $feed) {
+     if ($queue->createItem($feed)) {
+@@ -344,11 +344,11 @@
+  */
+ function aggregator_block_info() {
+   $blocks = array();
+-  $result = db_query('SELECT cid, title FROM {aggregator_category} ORDER BY title');
++  $result = db_query('SELECT cid, title FROM {aggregator_category} ORDER BY title')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $category) {
+     $blocks['category-' . $category->cid]['info'] = t('!title category latest items', array('!title' => $category->title));
+   }
+-  $result = db_query('SELECT fid, title FROM {aggregator_feed} WHERE block <> 0 ORDER BY fid');
++  $result = db_query('SELECT fid, title FROM {aggregator_feed} WHERE block <> 0 ORDER BY fid')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $feed) {
+     $blocks['feed-' . $feed->fid]['info'] = t('!title feed latest items', array('!title' => $feed->title));
+   }
+@@ -398,7 +398,7 @@
+       case 'feed':
+         if ($feed = db_query('SELECT fid, title, block FROM {aggregator_feed} WHERE block <> 0 AND fid = :fid', array(':fid' => $id))->fetchObject()) {
+           $block['subject'] = check_plain($feed->title);
+-          $result = db_query_range("SELECT * FROM {aggregator_item} WHERE fid = :fid ORDER BY timestamp DESC, iid DESC", 0, $feed->block, array(':fid' => $id));
++          $result = db_query_range("SELECT * FROM {aggregator_item} WHERE fid = :fid ORDER BY timestamp DESC, iid DESC", 0, $feed->block, array(':fid' => $id))->fetchAll(PDO::FETCH_OBJ);
+           $read_more = theme('more_link', array('url' => 'aggregator/sources/' . $feed->fid, 'title' => t("View this feed's recent news.")));
+         }
+         break;
+@@ -406,7 +406,7 @@
+       case 'category':
+         if ($category = db_query('SELECT cid, title, block FROM {aggregator_category} WHERE cid = :cid', array(':cid' => $id))->fetchObject()) {
+           $block['subject'] = check_plain($category->title);
+-          $result = db_query_range('SELECT i.* FROM {aggregator_category_item} ci LEFT JOIN {aggregator_item} i ON ci.iid = i.iid WHERE ci.cid = :cid ORDER BY i.timestamp DESC, i.iid DESC', 0, $category->block, array(':cid' => $category->cid));
++          $result = db_query_range('SELECT i.* FROM {aggregator_category_item} ci LEFT JOIN {aggregator_item} i ON ci.iid = i.iid WHERE ci.cid = :cid ORDER BY i.timestamp DESC, i.iid DESC', 0, $category->block, array(':cid' => $category->cid))->fetchAll(PDO::FETCH_OBJ);
+           $read_more = theme('more_link', array('url' => 'aggregator/categories/' . $category->cid, 'title' => t("View this category's recent news.")));
+         }
+         break;
+diff -uNr drupal-7.4.org/modules/aggregator/aggregator.pages.inc drupal-7.4/modules/aggregator/aggregator.pages.inc
+--- drupal-7.4.org/modules/aggregator/aggregator.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/aggregator/aggregator.pages.inc	2011-06-30 09:24:40.191794822 -0400
+@@ -103,13 +103,13 @@
+   $range_limit = 20;
+   switch ($type) {
+     case 'sum':
+-      $result = db_query_range('SELECT i.*, f.title AS ftitle, f.link AS flink FROM {aggregator_item} i INNER JOIN {aggregator_feed} f ON i.fid = f.fid ORDER BY i.timestamp DESC, i.iid DESC', 0, $range_limit);
++      $result = db_query_range('SELECT i.*, f.title AS ftitle, f.link AS flink FROM {aggregator_item} i INNER JOIN {aggregator_feed} f ON i.fid = f.fid ORDER BY i.timestamp DESC, i.iid DESC', 0, $range_limit)->fetchAll(PDO::FETCH_OBJ);
+       break;
+     case 'source':
+-      $result = db_query_range('SELECT * FROM {aggregator_item} WHERE fid = :fid ORDER BY timestamp DESC, iid DESC', 0, $range_limit, array(':fid' => $data->fid));
++      $result = db_query_range('SELECT * FROM {aggregator_item} WHERE fid = :fid ORDER BY timestamp DESC, iid DESC', 0, $range_limit, array(':fid' => $data->fid))->fetchAll(PDO::FETCH_OBJ);
+       break;
+     case 'category':
+-      $result = db_query_range('SELECT i.*, f.title AS ftitle, f.link AS flink FROM {aggregator_category_item} c LEFT JOIN {aggregator_item} i ON c.iid = i.iid LEFT JOIN {aggregator_feed} f ON i.fid = f.fid WHERE cid = :cid ORDER BY timestamp DESC, i.iid DESC', 0, $range_limit, array(':cid' => $data['cid']));
++      $result = db_query_range('SELECT i.*, f.title AS ftitle, f.link AS flink FROM {aggregator_category_item} c LEFT JOIN {aggregator_item} i ON c.iid = i.iid LEFT JOIN {aggregator_feed} f ON i.fid = f.fid WHERE cid = :cid ORDER BY timestamp DESC, i.iid DESC', 0, $range_limit, array(':cid' => $data['cid']))->fetchAll(PDO::FETCH_OBJ);
+       break;
+   }
+ 
+@@ -179,7 +179,7 @@
+   foreach ($items as $item) {
+     $form['items'][$item->iid] = array('#markup' => theme('aggregator_item', array('item' => $item)));
+     $form['categories'][$item->iid] = array();
+-    $categories_result = db_query('SELECT c.cid, c.title, ci.iid FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid AND ci.iid = :iid', array(':iid' => $item->iid));
++    $categories_result = db_query('SELECT c.cid, c.title, ci.iid FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid AND ci.iid = :iid', array(':iid' => $item->iid))->fetchAll(PDO::FETCH_OBJ);
+     $selected = array();
+     foreach ($categories_result as $category) {
+       if (!$done) {
+@@ -305,14 +305,14 @@
+  * Menu callback; displays all the feeds used by the aggregator.
+  */
+ function aggregator_page_sources() {
+-  $result = db_query('SELECT f.fid, f.title, f.description, f.image, MAX(i.timestamp) AS last FROM {aggregator_feed} f LEFT JOIN {aggregator_item} i ON f.fid = i.fid GROUP BY f.fid, f.title, f.description, f.image ORDER BY last DESC, f.title');
++  $result = db_query('SELECT f.fid, f.title, f.description, f.image, MAX(i.timestamp) AS last FROM {aggregator_feed} f LEFT JOIN {aggregator_item} i ON f.fid = i.fid GROUP BY f.fid, f.title, f.description, f.image ORDER BY last DESC, f.title')->fetchAll(PDO::FETCH_OBJ);
+ 
+   $output = '';
+   foreach ($result as $feed) {
+     // Most recent items:
+     $summary_items = array();
+     if (variable_get('aggregator_summary_items', 3)) {
+-      $items = db_query_range('SELECT i.title, i.timestamp, i.link FROM {aggregator_item} i WHERE i.fid = :fid ORDER BY i.timestamp DESC', 0, variable_get('aggregator_summary_items', 3), array(':fid' => $feed->fid));
++      $items = db_query_range('SELECT i.title, i.timestamp, i.link FROM {aggregator_item} i WHERE i.fid = :fid ORDER BY i.timestamp DESC', 0, variable_get('aggregator_summary_items', 3), array(':fid' => $feed->fid))->fetchAll(PDO::FETCH_OBJ);
+       foreach ($items as $item) {
+         $summary_items[] = theme('aggregator_summary_item', array('item' => $item));
+       }
+@@ -329,13 +329,13 @@
+  * Menu callback; displays all the categories used by the aggregator.
+  */
+ function aggregator_page_categories() {
+-  $result = db_query('SELECT c.cid, c.title, c.description FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid LEFT JOIN {aggregator_item} i ON ci.iid = i.iid GROUP BY c.cid, c.title, c.description');
++  $result = db_query('SELECT c.cid, c.title, c.description FROM {aggregator_category} c LEFT JOIN {aggregator_category_item} ci ON c.cid = ci.cid LEFT JOIN {aggregator_item} i ON ci.iid = i.iid GROUP BY c.cid, c.title, c.description')->fetchAll(PDO::FETCH_OBJ);
+ 
+   $output = '';
+   foreach ($result as $category) {
+     if (variable_get('aggregator_summary_items', 3)) {
+       $summary_items = array();
+-      $items = db_query_range('SELECT i.title, i.timestamp, i.link, f.title as feed_title, f.link as feed_link FROM {aggregator_category_item} ci LEFT JOIN {aggregator_item} i ON i.iid = ci.iid LEFT JOIN {aggregator_feed} f ON i.fid = f.fid WHERE ci.cid = :cid ORDER BY i.timestamp DESC', 0, variable_get('aggregator_summary_items', 3), array(':cid' => $category->cid));
++      $items = db_query_range('SELECT i.title, i.timestamp, i.link, f.title as feed_title, f.link as feed_link FROM {aggregator_category_item} ci LEFT JOIN {aggregator_item} i ON i.iid = ci.iid LEFT JOIN {aggregator_feed} f ON i.fid = f.fid WHERE ci.cid = :cid ORDER BY i.timestamp DESC', 0, variable_get('aggregator_summary_items', 3), array(':cid' => $category->cid))->fetchAll(PDO::FETCH_OBJ);
+       foreach ($items as $item) {
+         $summary_items[] = theme('aggregator_summary_item', array('item' => $item));
+       }
+diff -uNr drupal-7.4.org/modules/aggregator/aggregator.processor.inc drupal-7.4/modules/aggregator/aggregator.processor.inc
+--- drupal-7.4.org/modules/aggregator/aggregator.processor.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/aggregator/aggregator.processor.inc	2011-06-30 09:24:40.194292366 -0400
+@@ -159,7 +159,7 @@
+   }
+   elseif ($edit['title'] && $edit['link']) {
+     // file the items in the categories indicated by the feed
+-    $result = db_query('SELECT cid FROM {aggregator_category_feed} WHERE fid = :fid', array(':fid' => $edit['fid']));
++    $result = db_query('SELECT cid FROM {aggregator_category_feed} WHERE fid = :fid', array(':fid' => $edit['fid']))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $category) {
+       db_merge('aggregator_category_item')
+         ->key(array(
+diff -uNr drupal-7.4.org/modules/aggregator/aggregator.test drupal-7.4/modules/aggregator/aggregator.test
+--- drupal-7.4.org/modules/aggregator/aggregator.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/aggregator/aggregator.test	2011-06-30 09:24:40.197444349 -0400
+@@ -96,7 +96,7 @@
+     $this->drupalGet('admin/config/services/aggregator/update/' . $feed->fid);
+ 
+     // Ensure we have the right number of items.
+-    $result = db_query('SELECT iid FROM {aggregator_item} WHERE fid = :fid', array(':fid' => $feed->fid));
++    $result = db_query('SELECT iid FROM {aggregator_item} WHERE fid = :fid', array(':fid' => $feed->fid))->fetchAll(PDO::FETCH_OBJ);
+     $items = array();
+     $feed->items = array();
+     foreach ($result as $item) {
+@@ -142,7 +142,7 @@
+    */
+   function getFeedCategories($feed) {
+     // add the categories to the feed so we can use them
+-    $result = db_query('SELECT cid FROM {aggregator_category_feed} WHERE fid = :fid', array(':fid' => $feed->fid));
++    $result = db_query('SELECT cid FROM {aggregator_category_feed} WHERE fid = :fid', array(':fid' => $feed->fid))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $category) {
+       $feed->categories[] = $category->cid;
+     }
+@@ -153,7 +153,7 @@
+    */
+   function getCategories() {
+     $categories = array();
+-    $result = db_query('SELECT * FROM {aggregator_category}');
++    $result = db_query('SELECT * FROM {aggregator_category}')->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $category) {
+       $categories[$category->cid] = $category;
+     }
+@@ -680,7 +680,7 @@
+     $after = db_query('SELECT COUNT(*) FROM {aggregator_feed}')->fetchField();
+     $this->assertEqual($after, 2, t('Verifying that two distinct feeds were added.'));
+ 
+-    $feeds_from_db = db_query("SELECT f.title, f.url, f.refresh, cf.cid FROM {aggregator_feed} f LEFT JOIN {aggregator_category_feed} cf ON f.fid = cf.fid");
++    $feeds_from_db = db_query("SELECT f.title, f.url, f.refresh, cf.cid FROM {aggregator_feed} f LEFT JOIN {aggregator_category_feed} cf ON f.fid = cf.fid")->fetchAll(PDO::FETCH_OBJ);
+     $refresh = $category = TRUE;
+     foreach ($feeds_from_db as $feed) {
+       $title[$feed->url] = $feed->title;
+diff -uNr drupal-7.4.org/modules/block/block.api.php drupal-7.4/modules/block/block.api.php
+--- drupal-7.4.org/modules/block/block.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/block/block.api.php	2011-06-30 09:24:40.199255504 -0400
+@@ -324,7 +324,7 @@
+   // This example shows how to achieve language specific visibility setting for
+   // blocks.
+ 
+-  $result = db_query('SELECT module, delta, language FROM {my_table}');
++  $result = db_query('SELECT module, delta, language FROM {my_table}')->fetchAll(PDO::FETCH_OBJ);
+   $block_languages = array();
+   foreach ($result as $record) {
+     $block_languages[$record->module][$record->delta][$record->language] = TRUE;
+diff -uNr drupal-7.4.org/modules/block/block.install drupal-7.4/modules/block/block.install
+--- drupal-7.4.org/modules/block/block.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/block/block.install	2011-06-30 09:24:40.201297655 -0400
+@@ -256,7 +256,7 @@
+ function block_update_7004() {
+   // Collect a list of themes with blocks.
+   $themes_with_blocks = array();
+-  $result = db_query("SELECT s.name FROM {system} s INNER JOIN {block} b ON s.name = b.theme WHERE s.type = 'theme' GROUP by s.name");
++  $result = db_query("SELECT s.name FROM {system} s INNER JOIN {block} b ON s.name = b.theme WHERE s.type = 'theme' GROUP by s.name")->fetchAll(PDO::FETCH_OBJ);
+ 
+   $insert = db_insert('block')->fields(array('module', 'delta', 'theme', 'status', 'weight', 'region', 'pages', 'cache'));
+   foreach ($result as $theme) {
+diff -uNr drupal-7.4.org/modules/block/block.module drupal-7.4/modules/block/block.module
+--- drupal-7.4.org/modules/block/block.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/block/block.module	2011-06-30 09:24:40.203241508 -0400
+@@ -205,7 +205,7 @@
+ function block_block_info() {
+   $blocks = array();
+ 
+-  $result = db_query('SELECT bid, info FROM {block_custom} ORDER BY info');
++  $result = db_query('SELECT bid, info FROM {block_custom} ORDER BY info')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $block) {
+     $blocks[$block->bid]['info'] = $block->info;
+     // Not worth caching.
+@@ -401,7 +401,7 @@
+     ->fields('b')
+     ->condition($or)
+     ->condition('theme', $theme)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   foreach ($database_blocks as $block) {
+     // Preserve info which is not in the database.
+     $block->info = $current_blocks[$block->module][$block->delta]['info'];
+@@ -550,7 +550,7 @@
+   if ($form['#user_category'] == 'account') {
+     $account = $form['#user'];
+     $rids = array_keys($account->roles);
+-    $result = db_query("SELECT DISTINCT b.* FROM {block} b LEFT JOIN {block_role} r ON b.module = r.module AND b.delta = r.delta WHERE b.status = 1 AND b.custom <> 0 AND (r.rid IN (:rids) OR r.rid IS NULL) ORDER BY b.weight, b.module", array(':rids' => $rids));
++    $result = db_query("SELECT DISTINCT b.* FROM {block} b LEFT JOIN {block_role} r ON b.module = r.module AND b.delta = r.delta WHERE b.status = 1 AND b.custom <> 0 AND (r.rid IN (:rids) OR r.rid IS NULL) ORDER BY b.weight, b.module", array(':rids' => $rids))->fetchAll(PDO::FETCH_OBJ);
+ 
+     $blocks = array();
+     foreach ($result as $block) {
+@@ -613,7 +613,7 @@
+   if (!$has_blocks) {
+     $default_theme = variable_get('theme_default', 'bartik');
+     $regions = system_region_list($theme);
+-    $result = db_query("SELECT * FROM {block} WHERE theme = :theme", array(':theme' => $default_theme), array('fetch' => PDO::FETCH_ASSOC));
++    $result = db_query("SELECT * FROM {block} WHERE theme = :theme", array(':theme' => $default_theme), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($result as $block) {
+       // If the region isn't supported by the theme, assign the block to the theme's default region.
+       if ($block['status'] && !isset($regions[$block['region']])) {
+@@ -728,7 +728,7 @@
+ 
+   // Build an array of roles for each block.
+   $block_roles = array();
+-  $result = db_query('SELECT module, delta, rid FROM {block_role}');
++  $result = db_query('SELECT module, delta, rid FROM {block_role}')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $block_roles[$record->module][$record->delta][] = $record->rid;
+   }
+@@ -900,7 +900,7 @@
+   // Rehash blocks for active themes. We don't use list_themes() here,
+   // because if MAINTENANCE_MODE is defined it skips reading the database,
+   // and we can't tell which themes are active.
+-  $themes = db_query("SELECT name FROM {system} WHERE type = 'theme' AND status = 1");
++  $themes = db_query("SELECT name FROM {system} WHERE type = 'theme' AND status = 1")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($themes as $theme) {
+     _block_rehash($theme->name);
+   }
+diff -uNr drupal-7.4.org/modules/block/block.test drupal-7.4/modules/block/block.test
+--- drupal-7.4.org/modules/block/block.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/block/block.test	2011-06-30 09:24:40.208254242 -0400
+@@ -388,7 +388,7 @@
+ 
+     // Populate list of all blocks for matching against new theme.
+     $blocks = array();
+-    $result = db_query('SELECT * FROM {block} WHERE theme = :theme', array(':theme' => $themes['default']));
++    $result = db_query('SELECT * FROM {block} WHERE theme = :theme', array(':theme' => $themes['default']))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $block) {
+       // $block->theme and $block->bid will not match, so remove them.
+       unset($block->theme, $block->bid);
+@@ -399,7 +399,7 @@
+     // the default theme had.
+     theme_enable(array('stark'));
+     variable_set('theme_default', 'stark');
+-    $result = db_query('SELECT * FROM {block} WHERE theme = :theme', array(':theme' => 'stark'));
++    $result = db_query('SELECT * FROM {block} WHERE theme = :theme', array(':theme' => 'stark'))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $block) {
+       unset($block->theme, $block->bid);
+       $this->assertEqual($blocks[$block->module][$block->delta], $block, t('Block %name matched', array('%name' => $block->module . '-' . $block->delta)));
+diff -uNr drupal-7.4.org/modules/blog/blog.module drupal-7.4/modules/blog/blog.module
+--- drupal-7.4.org/modules/blog/blog.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/blog/blog.module	2011-06-30 09:24:40.213295133 -0400
+@@ -240,7 +240,7 @@
+       ->orderBy('created', 'DESC')
+       ->range(0, variable_get('blog_block_count', 10))
+       ->addTag('node_access')
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     if ($node_title_list = node_title_list($result)) {
+       $block['subject'] = t('Recent blog posts');
+diff -uNr drupal-7.4.org/modules/book/book.module drupal-7.4/modules/book/book.module
+--- drupal-7.4.org/modules/book/book.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/book/book.module	2011-06-30 09:24:40.216297635 -0400
+@@ -368,7 +368,7 @@
+       $query->orderBy('ml.weight');
+       $query->orderBy('ml.link_title');
+       $query->addTag('node_access');
+-      $result2 = $query->execute();
++      $result2 = $query->execute()->fetchAll(PDO::FETCH_ASSOC);
+       foreach ($result2 as $link) {
+         $link['href'] = $link['link_path'];
+         $link['options'] = unserialize($link['options']);
+@@ -786,7 +786,7 @@
+  * Implements hook_node_load().
+  */
+ function book_node_load($nodes, $types) {
+-  $result = db_query("SELECT * FROM {book} b INNER JOIN {menu_links} ml ON b.mlid = ml.mlid WHERE b.nid IN (:nids)", array(':nids' =>  array_keys($nodes)), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT * FROM {book} b INNER JOIN {menu_links} ml ON b.mlid = ml.mlid WHERE b.nid IN (:nids)", array(':nids' =>  array_keys($nodes)), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $record) {
+     $nodes[$record['nid']]->book = $record;
+     $nodes[$record['nid']]->book['href'] = $record['link_path'];
+@@ -884,7 +884,7 @@
+       // Handle deletion of a top-level post.
+       $result = db_query("SELECT b.nid FROM {menu_links} ml INNER JOIN {book} b on b.mlid = ml.mlid WHERE ml.plid = :plid", array(
+         ':plid' => $node->book['mlid']
+-      ));
++      ))->fetchAll(PDO::FETCH_OBJ);
+       foreach ($result as $child) {
+         $child_node = node_load($child->nid);
+         $child_node->book['bid'] = $child_node->nid;
+@@ -1285,7 +1285,7 @@
+         $query->orderBy("p$i");
+       }
+       $links = array();
+-      foreach ($query->execute() as $item) {
++      foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $item) {
+         $links[] = $item;
+       }
+       $data['tree'] = menu_tree_data($links, array(), $link['depth']);
+diff -uNr drupal-7.4.org/modules/comment/comment.admin.inc drupal-7.4/modules/comment/comment.admin.inc
+--- drupal-7.4.org/modules/comment/comment.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/comment/comment.admin.inc	2011-06-30 09:24:40.222392008 -0400
+@@ -78,7 +78,7 @@
+     ->condition('c.status', $status)
+     ->limit(50)
+     ->orderByHeader($header)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $cids = array();
+ 
+diff -uNr drupal-7.4.org/modules/comment/comment.api.php drupal-7.4/modules/comment/comment.api.php
+--- drupal-7.4.org/modules/comment/comment.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/comment/comment.api.php	2011-06-30 09:24:40.224294877 -0400
+@@ -52,7 +52,7 @@
+  *  An array of comment objects indexed by cid.
+  */
+ function hook_comment_load($comments) {
+-  $result = db_query('SELECT cid, foo FROM {mytable} WHERE cid IN (:cids)', array(':cids' => array_keys($comments)));
++  $result = db_query('SELECT cid, foo FROM {mytable} WHERE cid IN (:cids)', array(':cids' => array_keys($comments)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $comments[$record->cid]->foo = $record->foo;
+   }
+diff -uNr drupal-7.4.org/modules/comment/comment.module drupal-7.4/modules/comment/comment.module
+--- drupal-7.4.org/modules/comment/comment.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/comment/comment.module	2011-06-30 09:24:40.229285395 -0400
+@@ -1259,7 +1259,7 @@
+ 
+   // For nodes with comments enabled, fetch information from the database.
+   if (!empty($comments_enabled)) {
+-    $result = db_query('SELECT nid, cid, last_comment_timestamp, last_comment_name, last_comment_uid, comment_count FROM {node_comment_statistics} WHERE nid IN (:comments_enabled)', array(':comments_enabled' => $comments_enabled));
++    $result = db_query('SELECT nid, cid, last_comment_timestamp, last_comment_name, last_comment_uid, comment_count FROM {node_comment_statistics} WHERE nid IN (:comments_enabled)', array(':comments_enabled' => $comments_enabled))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $nodes[$record->nid]->cid = $record->cid;
+       $nodes[$record->nid]->last_comment_timestamp = $record->last_comment_timestamp;
+@@ -1319,7 +1319,7 @@
+   if ($index_comments === NULL) {
+     // Find and save roles that can 'access comments' or 'search content'.
+     $perms = array('access comments' => array(), 'search content' => array());
+-    $result = db_query("SELECT rid, permission FROM {role_permission} WHERE permission IN ('access comments', 'search content')");
++    $result = db_query("SELECT rid, permission FROM {role_permission} WHERE permission IN ('access comments', 'search content')")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $perms[$record->permission][$record->rid] = $record->rid;
+     }
+diff -uNr drupal-7.4.org/modules/dashboard/dashboard.install drupal-7.4/modules/dashboard/dashboard.install
+--- drupal-7.4.org/modules/dashboard/dashboard.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/dashboard/dashboard.install	2011-06-30 09:24:40.230308280 -0400
+@@ -19,7 +19,7 @@
+   $result = db_select('block', 'b')
+     ->fields('b', array('module', 'delta', 'region'))
+     ->condition('b.region', dashboard_regions(), 'IN')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $block) {
+     $stashed_blocks[] = array(
+diff -uNr drupal-7.4.org/modules/dashboard/dashboard.module drupal-7.4/modules/dashboard/dashboard.module
+--- drupal-7.4.org/modules/dashboard/dashboard.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/dashboard/dashboard.module	2011-06-30 09:24:40.232290030 -0400
+@@ -177,7 +177,7 @@
+         ->condition('status', 1)
+         ->condition('region', $region)
+         ->fields('block')
+-        ->execute();
++        ->execute()->fetchAll(PDO::FETCH_OBJ);
+       foreach ($block_list as $block) {
+         if (!isset($blocks_found[$block->module . '_' . $block->delta])) {
+           $block->enabled = $block->page_match = TRUE;
+diff -uNr drupal-7.4.org/modules/dblog/dblog.admin.inc drupal-7.4/modules/dblog/dblog.admin.inc
+--- drupal-7.4.org/modules/dblog/dblog.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/dblog/dblog.admin.inc	2011-06-30 09:24:40.237322138 -0400
+@@ -48,7 +48,7 @@
+   $result = $query
+     ->limit(50)
+     ->orderByHeader($header)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $dblog) {
+     $rows[] = array('data' =>
+@@ -106,7 +106,7 @@
+     ->limit(30)
+     ->orderByHeader($header);
+   $query->setCountQuery($count_query);
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $rows = array();
+   foreach ($result as $dblog) {
+diff -uNr drupal-7.4.org/modules/dblog/dblog.module drupal-7.4/modules/dblog/dblog.module
+--- drupal-7.4.org/modules/dblog/dblog.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/dblog/dblog.module	2011-06-30 09:24:40.242302625 -0400
+@@ -124,7 +124,7 @@
+ function _dblog_get_message_types() {
+   $types = array();
+ 
+-  $result = db_query('SELECT DISTINCT(type) FROM {watchdog} ORDER BY type');
++  $result = db_query('SELECT DISTINCT(type) FROM {watchdog} ORDER BY type')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $object) {
+     $types[] = $object->type;
+   }
+diff -uNr drupal-7.4.org/modules/dblog/dblog.test drupal-7.4/modules/dblog/dblog.test
+--- drupal-7.4.org/modules/dblog/dblog.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/dblog/dblog.test	2011-06-30 09:24:40.245291765 -0400
+@@ -203,7 +203,7 @@
+     // Logout user.
+     $this->drupalLogout();
+     // Fetch row ids in watchdog that relate to the user.
+-    $result = db_query('SELECT wid FROM {watchdog} WHERE uid = :uid', array(':uid' => $user->uid));
++    $result = db_query('SELECT wid FROM {watchdog} WHERE uid = :uid', array(':uid' => $user->uid))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $row) {
+       $ids[] = $row->wid;
+     }
+@@ -471,7 +471,7 @@
+       $count = $this->getTypeCount($types);
+       $this->assertEqual(array_sum($count), $type['count'], 'Count matched');
+     }
+-    
++
+     // Clear all logs and make sure the confirmation message is found.
+     $this->drupalPost('admin/reports/dblog', array(), t('Clear log messages'));
+     $this->assertText(t('Database log cleared.'), t('Confirmation message found'));
+diff -uNr drupal-7.4.org/modules/field/field.api.php drupal-7.4/modules/field/field.api.php
+--- drupal-7.4.org/modules/field/field.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/field.api.php	2011-06-30 09:24:40.249251887 -0400
+@@ -1600,7 +1600,7 @@
+       $query->condition('deleted', 0);
+     }
+ 
+-    $results = $query->execute();
++    $results = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $delta_count = array();
+     foreach ($results as $row) {
+diff -uNr drupal-7.4.org/modules/field/field.crud.inc drupal-7.4/modules/field/field.crud.inc
+--- drupal-7.4.org/modules/field/field.crud.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/field.crud.inc	2011-06-30 09:24:40.252290766 -0400
+@@ -346,7 +346,7 @@
+   }
+ 
+   $fields = array();
+-  $results = $query->execute();
++  $results = $query->execute()->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($results as $record) {
+     $field = unserialize($record['data']);
+     $field['id'] = $record['id'];
+@@ -698,7 +698,7 @@
+   }
+ 
+   $instances = array();
+-  $results = $query->execute();
++  $results = $query->execute()->fetchAll(PDO::FETCH_ASSOC);
+ 
+   foreach ($results as $record) {
+     // Filter out instances on unknown entity types (for instance because the
+diff -uNr drupal-7.4.org/modules/field/field.install drupal-7.4/modules/field/field.install
+--- drupal-7.4.org/modules/field/field.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/field.install	2011-06-30 09:24:40.254244698 -0400
+@@ -331,7 +331,7 @@
+   foreach ($conditions as $column => $value) {
+     $query->condition($column, $value);
+   }
+-  foreach ($query->execute() as $record) {
++  foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $record) {
+     $field = unserialize($record['data']);
+     $field['id'] = $record['id'];
+     $field['field_name'] = $record['field_name'];
+diff -uNr drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.install drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.install
+--- drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.install	2011-06-30 09:24:40.265189476 -0400
+@@ -113,7 +113,7 @@
+     $results = db_select('field_config', 'fc', array('fetch' => PDO::FETCH_ASSOC))
+       ->fields('fc')
+       ->condition('storage_module', 'field_sql_storage')
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($results as $field) {
+       if ($field['deleted']) {
+         $sandbox['tables']["field_deleted_data_{$field['id']}"] = 'data';
+@@ -198,7 +198,7 @@
+   $results = db_select('field_config', 'fc', array('fetch' => PDO::FETCH_ASSOC))
+     ->fields('fc')
+     ->condition('storage_module', 'field_sql_storage')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($results as $field) {
+     // Revision tables of deleted fields do not need to be fixed, since no new
+     // data is written to them.
+diff -uNr drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.module drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.module
+--- drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.module	2011-06-30 09:24:40.266251785 -0400
+@@ -319,7 +319,7 @@
+       $query->condition('deleted', 0);
+     }
+ 
+-    $results = $query->execute();
++    $results = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $delta_count = array();
+     foreach ($results as $row) {
+diff -uNr drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.test drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.test
+--- drupal-7.4.org/modules/field/modules/field_sql_storage/field_sql_storage.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/field/modules/field_sql_storage/field_sql_storage.test	2011-06-30 09:24:40.268306504 -0400
+@@ -158,7 +158,7 @@
+     // put one extra value in $values per revision), unset the entire
+     // revision. Then, if $rev_values is empty at the end, all
+     // revision data was found.
+-    $results = db_select($this->revision_table, 't')->fields('t')->execute();
++    $results = db_select($this->revision_table, 't')->fields('t')->execute()->fetchAll(PDO::FETCH_OBJ);
+     foreach ($results as $row) {
+       $this->assertEqual($row->{$this->field_name . '_value'}, $rev_values[$row->revision_id][$row->delta]['value'], "Value {$row->delta} for revision {$row->revision_id} stored correctly");
+       unset($rev_values[$row->revision_id][$row->delta]);
+diff -uNr drupal-7.4.org/modules/filter/filter.install drupal-7.4/modules/filter/filter.install
+--- drupal-7.4.org/modules/filter/filter.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/filter/filter.install	2011-06-30 09:24:40.270307304 -0400
+@@ -297,7 +297,7 @@
+         ->condition('delta', $old_delta)
+         ->distinct();
+ 
+-      foreach ($query->execute() as $record) {
++      foreach ($query->execute()->fetchAll(PDO::FETCH_OBJ) as $record) {
+         // Port the filter settings.
+         $settings = array();
+         if ($new_name == 'filter_html') {
+@@ -352,7 +352,7 @@
+   // Move role data from the filter system to the user permission system.
+   $all_roles = array_keys(user_roles());
+   $default_format = variable_get('filter_default_format', 1);
+-  $result = db_query("SELECT * FROM {filter_format}");
++  $result = db_query("SELECT * FROM {filter_format}")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $format) {
+     // We need to assign the default format to all roles (regardless of what
+     // was stored in the database) to preserve the behavior of the site at the
+diff -uNr drupal-7.4.org/modules/filter/filter.module drupal-7.4/modules/filter/filter.module
+--- drupal-7.4.org/modules/filter/filter.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/filter/filter.module	2011-06-30 09:24:40.272314021 -0400
+@@ -661,7 +661,7 @@
+       $filters['all'] = $cache->data;
+     }
+     else {
+-      $result = db_query('SELECT * FROM {filter} ORDER BY weight, module, name');
++      $result = db_query('SELECT * FROM {filter} ORDER BY weight, module, name')->fetchAll(PDO::FETCH_OBJ);
+       foreach ($result as $record) {
+         $filters['all'][$record->format][$record->name] = $record;
+       }
+diff -uNr drupal-7.4.org/modules/filter/filter.test drupal-7.4/modules/filter/filter.test
+--- drupal-7.4.org/modules/filter/filter.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/filter/filter.test	2011-06-30 09:24:40.275241915 -0400
+@@ -301,7 +301,7 @@
+     ));
+     $this->assertTrue(!empty($elements), t('Reorder confirmed in admin interface.'));
+ 
+-    $result = db_query('SELECT * FROM {filter} WHERE format = :format ORDER BY weight ASC', array(':format' => $filtered));
++    $result = db_query('SELECT * FROM {filter} WHERE format = :format ORDER BY weight ASC', array(':format' => $filtered))->fetchAll(PDO::FETCH_OBJ);
+     $filters = array();
+     foreach ($result as $filter) {
+       if ($filter->name == $second_filter || $filter->name == $first_filter) {
+diff -uNr drupal-7.4.org/modules/forum/forum.module drupal-7.4/modules/forum/forum.module
+--- drupal-7.4.org/modules/forum/forum.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/forum/forum.module	2011-06-30 09:24:40.278249306 -0400
+@@ -432,7 +432,7 @@
+     $query
+       ->fields('f', array('nid', 'tid'))
+       ->condition('f.vid', $node_vids);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $nodes[$record->nid]->forum_tid = $record->tid;
+     }
+@@ -884,7 +884,7 @@
+   $count_query->addTag('node_access');
+ 
+   $query->setCountQuery($count_query);
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   $nids = array();
+   foreach ($result as $record) {
+     $nids[] = $record->nid;
+@@ -912,7 +912,7 @@
+       ->orderByHeader($forum_topic_list_header)
+       ->condition('n.nid', $nids);
+ 
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   }
+   else {
+     $result = array();
+@@ -1200,7 +1200,7 @@
+   $history = &drupal_static(__FUNCTION__, array());
+ 
+   if (empty($history)) {
+-    $result = db_query('SELECT nid, timestamp FROM {history} WHERE uid = :uid', array(':uid' => $user->uid));
++    $result = db_query('SELECT nid, timestamp FROM {history} WHERE uid = :uid', array(':uid' => $user->uid))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $t) {
+       $history[$t->nid] = $t->timestamp > NODE_NEW_LIMIT ? $t->timestamp : NODE_NEW_LIMIT;
+     }
+diff -uNr drupal-7.4.org/modules/help/help.test drupal-7.4/modules/help/help.test
+--- drupal-7.4.org/modules/help/help.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/help/help.test	2011-06-30 09:24:40.280316052 -0400
+@@ -83,7 +83,7 @@
+    */
+   protected function getModuleList() {
+     $this->modules = array();
+-    $result = db_query("SELECT name, filename, info FROM {system} WHERE type = 'module' AND status = 1 ORDER BY weight ASC, filename ASC");
++    $result = db_query("SELECT name, filename, info FROM {system} WHERE type = 'module' AND status = 1 ORDER BY weight ASC, filename ASC")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $module) {
+       if (file_exists($module->filename) && function_exists($module->name . '_help')) {
+         $fullname = unserialize($module->info);
+diff -uNr drupal-7.4.org/modules/image/image.module drupal-7.4/modules/image/image.module
+--- drupal-7.4.org/modules/image/image.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/image/image.module	2011-06-30 09:24:40.285347560 -0400
+@@ -1032,7 +1032,7 @@
+     $result = db_select('image_effects', NULL, array('fetch' => PDO::FETCH_ASSOC))
+       ->fields('image_effects')
+       ->orderBy('image_effects.weight', 'ASC')
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($result as $effect) {
+       $effect['data'] = unserialize($effect['data']);
+       $definition = image_effect_definition_load($effect['name']);
+diff -uNr drupal-7.4.org/modules/locale/locale.admin.inc drupal-7.4/modules/locale/locale.admin.inc
+--- drupal-7.4.org/modules/locale/locale.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/locale/locale.admin.inc	2011-06-30 09:24:40.288293942 -0400
+@@ -763,7 +763,7 @@
+   $headers = array_merge(array(t('Language')), array_values($groups));
+ 
+   // Collect summaries of all source strings in all groups.
+-  $sums = db_query("SELECT COUNT(*) AS strings, textgroup FROM {locales_source} GROUP BY textgroup");
++  $sums = db_query("SELECT COUNT(*) AS strings, textgroup FROM {locales_source} GROUP BY textgroup")->fetchAll(PDO::FETCH_OBJ);
+   $groupsums = array();
+   foreach ($sums as $group) {
+     $groupsums[$group->textgroup] = $group->strings;
+@@ -779,7 +779,7 @@
+   }
+ 
+   // Languages with at least one record in the locale table.
+-  $translations = db_query("SELECT COUNT(*) AS translation, t.language, s.textgroup FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid GROUP BY textgroup, language");
++  $translations = db_query("SELECT COUNT(*) AS translation, t.language, s.textgroup FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid GROUP BY textgroup, language")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($translations as $data) {
+     $ratio = (!empty($groupsums[$data->textgroup]) && $data->translation > 0) ? round(($data->translation/$groupsums[$data->textgroup]) * 100.0, 2) : 0;
+     $rows[$data->language][$data->textgroup] = $data->translation . '/' . $groupsums[$data->textgroup] . " ($ratio%)";
+@@ -1160,7 +1160,7 @@
+   }
+ 
+   // Fetch translations and fill in default values in the form.
+-  $result = db_query("SELECT DISTINCT translation, language FROM {locales_target} WHERE lid = :lid AND language <> :omit", array(':lid' => $lid, ':omit' => $omit));
++  $result = db_query("SELECT DISTINCT translation, language FROM {locales_target} WHERE lid = :lid AND language <> :omit", array(':lid' => $lid, ':omit' => $omit))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $translation) {
+     $form['translations'][$translation->language]['#default_value'] = $translation->translation;
+   }
+diff -uNr drupal-7.4.org/modules/locale/locale.install drupal-7.4/modules/locale/locale.install
+--- drupal-7.4.org/modules/locale/locale.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/locale/locale.install	2011-06-30 09:24:40.290254835 -0400
+@@ -145,7 +145,7 @@
+   $locale_js_directory = 'public://' . variable_get('locale_js_directory', 'languages');
+ 
+   if (is_dir($locale_js_directory)) {
+-    $files = db_query('SELECT language, javascript FROM {languages}');
++    $files = db_query('SELECT language, javascript FROM {languages}')->fetchAll(PDO::FETCH_OBJ);
+     foreach ($files as $file) {
+       if (!empty($file->javascript)) {
+         file_unmanaged_delete($locale_js_directory . '/' . $file->language . '_' . $file->javascript . '.js');
+diff -uNr drupal-7.4.org/modules/locale/locale.module drupal-7.4/modules/locale/locale.module
+--- drupal-7.4.org/modules/locale/locale.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/locale/locale.module	2011-06-30 09:24:40.292301705 -0400
+@@ -655,7 +655,7 @@
+         // Refresh database stored cache of translations for given language.
+         // We only store short strings used in current version, to improve
+         // performance and consume less memory.
+-        $result = db_query("SELECT s.source, s.context, t.translation, t.language FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.textgroup = 'default' AND s.version = :version AND LENGTH(s.source) < :length", array(':language' => $langcode, ':version' => VERSION, ':length' => variable_get('locale_cache_length', 75)));
++        $result = db_query("SELECT s.source, s.context, t.translation, t.language FROM {locales_source} s LEFT JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.textgroup = 'default' AND s.version = :version AND LENGTH(s.source) < :length", array(':language' => $langcode, ':version' => VERSION, ':length' => variable_get('locale_cache_length', 75)))->fetchAll(PDO::FETCH_OBJ);
+         foreach ($result as $data) {
+           $locale_t[$langcode][$data->context][$data->source] = (empty($data->translation) ? TRUE : $data->translation);
+         }
+diff -uNr drupal-7.4.org/modules/menu/menu.admin.inc drupal-7.4/modules/menu/menu.admin.inc
+--- drupal-7.4.org/modules/menu/menu.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/menu/menu.admin.inc	2011-06-30 09:24:40.294302966 -0400
+@@ -9,7 +9,7 @@
+  * Menu callback which shows an overview page of all the custom menus and their descriptions.
+  */
+ function menu_overview_page() {
+-  $result = db_query("SELECT * FROM {menu_custom} ORDER BY title", array(), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT * FROM {menu_custom} ORDER BY title", array(), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   $header = array(t('Title'), array('data' => t('Operations'), 'colspan' => '3'));
+   $rows = array();
+   foreach ($result as $menu) {
+@@ -54,7 +54,7 @@
+     FROM {menu_links} ml LEFT JOIN {menu_router} m ON m.path = ml.router_path
+     WHERE ml.menu_name = :menu
+     ORDER BY p1 ASC, p2 ASC, p3 ASC, p4 ASC, p5 ASC, p6 ASC, p7 ASC, p8 ASC, p9 ASC";
+-  $result = db_query($sql, array(':menu' => $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query($sql, array(':menu' => $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   $links = array();
+   foreach ($result as $item) {
+     $links[] = $item;
+@@ -529,13 +529,13 @@
+   }
+ 
+   // Reset all the menu links defined by the system via hook_menu().
+-  $result = db_query("SELECT * FROM {menu_links} ml INNER JOIN {menu_router} m ON ml.router_path = m.path WHERE ml.menu_name = :menu AND ml.module = 'system' ORDER BY m.number_parts ASC", array(':menu' => $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT * FROM {menu_links} ml INNER JOIN {menu_router} m ON ml.router_path = m.path WHERE ml.menu_name = :menu AND ml.module = 'system' ORDER BY m.number_parts ASC", array(':menu' => $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $link) {
+     menu_reset_item($link);
+   }
+ 
+   // Delete all links to the overview page for this menu.
+-  $result = db_query("SELECT mlid FROM {menu_links} ml WHERE ml.link_path = :link", array(':link' => 'admin/structure/menu/manage/' . $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT mlid FROM {menu_links} ml WHERE ml.link_path = :link", array(':link' => 'admin/structure/menu/manage/' . $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $link) {
+     menu_link_delete($link['mlid']);
+   }
+@@ -587,7 +587,7 @@
+   }
+   else {
+     menu_save($menu);
+-    $result = db_query("SELECT mlid FROM {menu_links} WHERE link_path = :path", array(':path' => $path . $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC));
++    $result = db_query("SELECT mlid FROM {menu_links} WHERE link_path = :path", array(':path' => $path . $menu['menu_name']), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($result as $m) {
+       $link = menu_link_load($m['mlid']);
+       $link['link_title'] = $menu['title'];
+diff -uNr drupal-7.4.org/modules/menu/menu.module drupal-7.4/modules/menu/menu.module
+--- drupal-7.4.org/modules/menu/menu.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/menu/menu.module	2011-06-30 09:24:40.304275090 -0400
+@@ -182,7 +182,7 @@
+   $base_link = db_query("SELECT mlid AS plid, menu_name FROM {menu_links} WHERE link_path = 'admin/structure/menu' AND module = 'system'")->fetchAssoc();
+   $base_link['router_path'] = 'admin/structure/menu/manage/%';
+   $base_link['module'] = 'menu';
+-  $result = db_query("SELECT * FROM {menu_custom}", array(), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT * FROM {menu_custom}", array(), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $menu) {
+     // $link is passed by reference to menu_link_save(), so we make a copy of $base_link.
+     $link = $base_link;
+@@ -529,7 +529,7 @@
+  */
+ function menu_node_delete($node) {
+   // Delete all menu module links that point to this node.
+-  $result = db_query("SELECT mlid FROM {menu_links} WHERE link_path = :path AND module = 'menu'", array(':path' => 'node/' . $node->nid), array('fetch' => PDO::FETCH_ASSOC));
++  $result = db_query("SELECT mlid FROM {menu_links} WHERE link_path = :path AND module = 'menu'", array(':path' => 'node/' . $node->nid), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+   foreach ($result as $m) {
+     menu_link_delete($m['mlid']);
+   }
+diff -uNr drupal-7.4.org/modules/node/node.api.php drupal-7.4/modules/node/node.api.php
+--- drupal-7.4.org/modules/node/node.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/node/node.api.php	2011-06-30 09:24:40.307747636 -0400
+@@ -548,7 +548,7 @@
+  * @ingroup node_api_hooks
+  */
+ function hook_node_load($nodes, $types) {
+-  $result = db_query('SELECT nid, foo FROM {mytable} WHERE nid IN(:nids)', array(':nids' => array_keys($nodes)));
++  $result = db_query('SELECT nid, foo FROM {mytable} WHERE nid IN(:nids)', array(':nids' => array_keys($nodes)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $nodes[$record->nid]->foo = $record->foo;
+   }
+@@ -713,7 +713,7 @@
+  */
+ function hook_node_update_index($node) {
+   $text = '';
+-  $comments = db_query('SELECT subject, comment, format FROM {comment} WHERE nid = :nid AND status = :status', array(':nid' => $node->nid, ':status' => COMMENT_PUBLISHED));
++  $comments = db_query('SELECT subject, comment, format FROM {comment} WHERE nid = :nid AND status = :status', array(':nid' => $node->nid, ':status' => COMMENT_PUBLISHED))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($comments as $comment) {
+     $text .= '<h2>' . check_plain($comment->subject) . '</h2>' . check_markup($comment->comment, $comment->format, '', TRUE);
+   }
+@@ -1165,7 +1165,7 @@
+  * @ingroup node_api_hooks
+  */
+ function hook_load($nodes) {
+-  $result = db_query('SELECT nid, foo FROM {mytable} WHERE nid IN (:nids)', array(':nids' => array_keys($nodes)));
++  $result = db_query('SELECT nid, foo FROM {mytable} WHERE nid IN (:nids)', array(':nids' => array_keys($nodes)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $nodes[$record->nid]->foo = $record->foo;
+   }
+diff -uNr drupal-7.4.org/modules/node/node.install drupal-7.4/modules/node/node.install
+--- drupal-7.4.org/modules/node/node.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/node/node.install	2011-06-30 09:24:40.309273912 -0400
+@@ -688,7 +688,7 @@
+         ->condition('nr.vid', $sandbox['last'], '>')
+         ->orderBy('nr.vid', 'ASC')
+         ->range(0, $batch_size);
+-      $revisions = $query->execute();
++      $revisions = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+       // Load each revision of each node, set up 'body'
+       // appropriately, and save the node's field data.  Note that
+diff -uNr drupal-7.4.org/modules/node/node.module drupal-7.4/modules/node/node.module
+--- drupal-7.4.org/modules/node/node.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/node/node.module	2011-06-30 09:24:40.314245167 -0400
+@@ -701,7 +701,7 @@
+   if (!$rebuild) {
+     $query->condition('disabled', 0);
+   }
+-  foreach ($query->execute() as $type_object) {
++  foreach ($query->execute()->fetchAll(PDO::FETCH_OBJ) as $type_object) {
+     $type_db = $type_object->type;
+     // Original disabled value.
+     $disabled = $type_object->disabled;
+@@ -1658,7 +1658,7 @@
+   // Load results.
+   $find = $query
+     ->limit(10)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   $results = array();
+   foreach ($find as $item) {
+     // Render the node.
+@@ -2083,7 +2083,7 @@
+  */
+ function node_revision_list($node) {
+   $revisions = array();
+-  $result = db_query('SELECT r.vid, r.title, r.log, r.uid, n.vid AS current_vid, r.timestamp, u.name FROM {node_revision} r LEFT JOIN {node} n ON n.vid = r.vid INNER JOIN {users} u ON u.uid = r.uid WHERE r.nid = :nid ORDER BY r.vid DESC', array(':nid' => $node->nid));
++  $result = db_query('SELECT r.vid, r.title, r.log, r.uid, n.vid AS current_vid, r.timestamp, u.name FROM {node_revision} r LEFT JOIN {node} n ON n.vid = r.vid INNER JOIN {users} u ON u.uid = r.uid WHERE r.nid = :nid ORDER BY r.vid DESC', array(':nid' => $node->nid))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $revision) {
+     $revisions[$revision->vid] = $revision;
+   }
+@@ -2369,7 +2369,7 @@
+ 
+   // Build an array of node types for each block.
+   $block_node_types = array();
+-  $result = db_query('SELECT module, delta, type FROM {block_node_type}');
++  $result = db_query('SELECT module, delta, type FROM {block_node_type}')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $block_node_types[$record->module][$record->delta][$record->type] = TRUE;
+   }
+@@ -2598,7 +2598,7 @@
+ function node_update_index() {
+   $limit = (int)variable_get('search_cron_limit', 100);
+ 
+-  $result = db_query_range("SELECT n.nid FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0 ORDER BY d.reindex ASC, n.nid ASC", 0, $limit, array(), array('target' => 'slave'));
++  $result = db_query_range("SELECT n.nid FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0 ORDER BY d.reindex ASC, n.nid ASC", 0, $limit, array(), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $node) {
+     _node_index_node($node);
+@@ -3750,7 +3750,7 @@
+   // Use dropdown for fewer than 200 users; textbox for more than that.
+   if (intval($count) < 200) {
+     $options = array();
+-    $result = db_query("SELECT uid, name FROM {users} WHERE uid > 0 ORDER BY name");
++    $result = db_query("SELECT uid, name FROM {users} WHERE uid > 0 ORDER BY name")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $data) {
+       $options[$data->name] = $data->name;
+     }
+diff -uNr drupal-7.4.org/modules/openid/openid.pages.inc drupal-7.4/modules/openid/openid.pages.inc
+--- drupal-7.4.org/modules/openid/openid.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/openid/openid.pages.inc	2011-06-30 09:24:40.316314363 -0400
+@@ -47,7 +47,7 @@
+   $header = array(t('OpenID'), t('Operations'));
+   $rows = array();
+ 
+-  $result = db_query("SELECT * FROM {authmap} WHERE module='openid' AND uid=:uid", array(':uid' => $account->uid));
++  $result = db_query("SELECT * FROM {authmap} WHERE module='openid' AND uid=:uid", array(':uid' => $account->uid))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $identity) {
+     $rows[] = array(check_plain($identity->authname), l(t('Delete'), 'user/' . $account->uid . '/openid/delete/' . $identity->aid));
+   }
+diff -uNr drupal-7.4.org/modules/path/path.admin.inc drupal-7.4/modules/path/path.admin.inc
+--- drupal-7.4.org/modules/path/path.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/path/path.admin.inc	2011-06-30 09:24:40.325317947 -0400
+@@ -35,7 +35,7 @@
+     ->fields('url_alias')
+     ->orderByHeader($header)
+     ->limit(50)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $rows = array();
+   $destination = drupal_get_destination();
+diff -uNr drupal-7.4.org/modules/poll/poll.pages.inc drupal-7.4/modules/poll/poll.pages.inc
+--- drupal-7.4.org/modules/poll/poll.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/poll/poll.pages.inc	2011-06-30 09:24:40.327310293 -0400
+@@ -67,7 +67,7 @@
+     ->condition('pv.nid', $node->nid)
+     ->limit($votes_per_page)
+     ->orderByHeader($header)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $rows = array();
+   foreach ($queried_votes as $vote) {
+diff -uNr drupal-7.4.org/modules/profile/profile.admin.inc drupal-7.4/modules/profile/profile.admin.inc
+--- drupal-7.4.org/modules/profile/profile.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/profile/profile.admin.inc	2011-06-30 09:24:40.328316732 -0400
+@@ -12,7 +12,7 @@
+  * @see profile_admin_overview_submit()
+  */
+ function profile_admin_overview($form) {
+-  $result = db_query('SELECT title, name, type, category, fid, weight FROM {profile_field} ORDER BY category, weight');
++  $result = db_query('SELECT title, name, type, category, fid, weight FROM {profile_field} ORDER BY category, weight')->fetchAll(PDO::FETCH_OBJ);
+ 
+   $categories = array();
+   foreach ($result as $field) {
+@@ -437,7 +437,7 @@
+     ->fields('profile_field', array('category'))
+     ->condition('category', db_like($string) . '%', 'LIKE')
+     ->range(0, 10)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $data) {
+     $matches[$data->category] = check_plain($data->category);
+diff -uNr drupal-7.4.org/modules/profile/profile.module drupal-7.4/modules/profile/profile.module
+--- drupal-7.4.org/modules/profile/profile.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/profile/profile.module	2011-06-30 09:24:40.330299616 -0400
+@@ -148,7 +148,7 @@
+ function profile_block_configure($delta = '') {
+   // Compile a list of fields to show
+   $fields = array();
+-  $result = db_query('SELECT name, title, weight, visibility FROM {profile_field} WHERE visibility IN (:visibility) ORDER BY weight', array(':visibility' => array(PROFILE_PUBLIC, PROFILE_PUBLIC_LISTINGS)));
++  $result = db_query('SELECT name, title, weight, visibility FROM {profile_field} WHERE visibility IN (:visibility) ORDER BY weight', array(':visibility' => array(PROFILE_PUBLIC, PROFILE_PUBLIC_LISTINGS)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $fields[$record->name] = check_plain($record->title);
+   }
+@@ -183,7 +183,7 @@
+       if ($use_fields = variable_get('profile_block_author_fields', array())) {
+         // Compile a list of fields to show.
+         $fields = array();
+-        $result = db_query('SELECT * FROM {profile_field} WHERE visibility IN (:visibility) ORDER BY weight', array(':visibility' => array(PROFILE_PUBLIC, PROFILE_PUBLIC_LISTINGS)));
++        $result = db_query('SELECT * FROM {profile_field} WHERE visibility IN (:visibility) ORDER BY weight', array(':visibility' => array(PROFILE_PUBLIC, PROFILE_PUBLIC_LISTINGS)))->fetchAll(PDO::FETCH_OBJ);
+         foreach ($result as $record) {
+           // Ensure that field is displayed only if it is among the defined block fields and, if it is private, the user has appropriate permissions.
+           if (isset($use_fields[$record->name]) && $use_fields[$record->name]) {
+@@ -251,7 +251,7 @@
+  * Implements hook_user_load().
+  */
+ function profile_user_load($users) {
+-  $result = db_query('SELECT f.name, f.type, v.uid, v.value FROM {profile_field} f INNER JOIN {profile_value} v ON f.fid = v.fid WHERE uid IN (:uids)', array(':uids' => array_keys($users)));
++  $result = db_query('SELECT f.name, f.type, v.uid, v.value FROM {profile_field} f INNER JOIN {profile_value} v ON f.fid = v.fid WHERE uid IN (:uids)', array(':uids' => array_keys($users)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     if (empty($users[$record->uid]->{$record->name})) {
+       $users[$record->uid]->{$record->name} = _profile_field_serialize($record->type) ? unserialize($record->value) : $record->value;
+@@ -328,10 +328,10 @@
+ function profile_user_view($account) {
+   // Show private fields to administrators and people viewing their own account.
+   if (user_access('administer users') || $GLOBALS['user']->uid == $account->uid) {
+-    $result = db_query('SELECT * FROM {profile_field} WHERE visibility <> :hidden ORDER BY category, weight', array(':hidden' => PROFILE_HIDDEN));
++    $result = db_query('SELECT * FROM {profile_field} WHERE visibility <> :hidden ORDER BY category, weight', array(':hidden' => PROFILE_HIDDEN))->fetchAll(PDO::FETCH_OBJ);
+   }
+   else {
+-    $result = db_query('SELECT * FROM {profile_field} WHERE visibility <> :private AND visibility <> :hidden ORDER BY category, weight', array(':private' => PROFILE_PRIVATE, ':hidden' => PROFILE_HIDDEN));
++    $result = db_query('SELECT * FROM {profile_field} WHERE visibility <> :private AND visibility <> :hidden ORDER BY category, weight', array(':private' => PROFILE_PRIVATE, ':hidden' => PROFILE_HIDDEN))->fetchAll(PDO::FETCH_OBJ);
+   }
+ 
+   $fields = array();
+@@ -498,7 +498,7 @@
+  * Implements hook_user_categories().
+  */
+ function profile_user_categories() {
+-  $result = db_query("SELECT DISTINCT(category) FROM {profile_field}");
++  $result = db_query("SELECT DISTINCT(category) FROM {profile_field}")->fetchAll(PDO::FETCH_OBJ);
+   $data = array();
+   foreach ($result as $category) {
+     $data[] = array(
+@@ -623,5 +623,5 @@
+     ->fields('profile_field')
+     ->orderBy('category', 'ASC')
+     ->orderBy('weight', 'ASC')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ }
+diff -uNr drupal-7.4.org/modules/rdf/rdf.test drupal-7.4/modules/rdf/rdf.test
+--- drupal-7.4.org/modules/rdf/rdf.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/rdf/rdf.test	2011-06-30 09:24:40.332303940 -0400
+@@ -674,7 +674,7 @@
+ 
+     // Need to query database directly to obtain last_activity_date because
+     // it cannot be accessed via node_load().
+-    $result = db_query('SELECT t.changed FROM {tracker_node} t WHERE t.nid = (:nid)', array(':nid' => $node->nid));
++    $result = db_query('SELECT t.changed FROM {tracker_node} t WHERE t.nid = (:nid)', array(':nid' => $node->nid))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $node) {
+       $expected_last_activity_date = $node->changed;
+     }
+diff -uNr drupal-7.4.org/modules/search/search.api.php drupal-7.4/modules/search/search.api.php
+--- drupal-7.4.org/modules/search/search.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/search/search.api.php	2011-06-30 09:24:40.334268175 -0400
+@@ -217,7 +217,7 @@
+   // Load results.
+   $find = $query
+     ->limit(10)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   $results = array();
+   foreach ($find as $item) {
+     // Build the node body.
+@@ -334,7 +334,7 @@
+ function hook_update_index() {
+   $limit = (int)variable_get('search_cron_limit', 100);
+ 
+-  $result = db_query_range("SELECT n.nid FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0 ORDER BY d.reindex ASC, n.nid ASC", 0, $limit);
++  $result = db_query_range("SELECT n.nid FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0 ORDER BY d.reindex ASC, n.nid ASC", 0, $limit)->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $node) {
+     $node = node_load($node->nid);
+diff -uNr drupal-7.4.org/modules/search/search.module drupal-7.4/modules/search/search.module
+--- drupal-7.4.org/modules/search/search.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/search/search.module	2011-06-30 09:24:40.345275629 -0400
+@@ -385,7 +385,7 @@
+   // Find words that were deleted from search_index, but are still in
+   // search_total. We use a LEFT JOIN between the two tables and keep only the
+   // rows which fail to join.
+-  $result = db_query("SELECT t.word AS realword, i.word FROM {search_total} t LEFT JOIN {search_index} i ON t.word = i.word WHERE i.word IS NULL", array(), array('target' => 'slave'));
++  $result = db_query("SELECT t.word AS realword, i.word FROM {search_total} t LEFT JOIN {search_index} i ON t.word = i.word WHERE i.word IS NULL", array(), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+   $or = db_or();
+   foreach ($result as $word) {
+     $or->condition('word', $word->realword);
+@@ -726,7 +726,7 @@
+   $result = db_query("SELECT nid, caption FROM {search_node_links} WHERE sid = :sid AND type = :type", array(
+     ':sid' => $sid,
+     ':type' => $module
+-  ), array('target' => 'slave'));
++  ), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+   $links = array();
+   foreach ($result as $link) {
+     $links[$link->nid] = $link->caption;
+@@ -793,7 +793,7 @@
+  */
+ function search_node_update_index($node) {
+   // Transplant links to a node into the target node.
+-  $result = db_query("SELECT caption FROM {search_node_links} WHERE nid = :nid", array(':nid' => $node->nid), array('target' => 'slave'));
++  $result = db_query("SELECT caption FROM {search_node_links} WHERE nid = :nid", array(':nid' => $node->nid), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+   $output = array();
+   foreach ($result as $link) {
+     $output[] = $link->caption;
+diff -uNr drupal-7.4.org/modules/simpletest/simpletest.pages.inc drupal-7.4/modules/simpletest/simpletest.pages.inc
+--- drupal-7.4.org/modules/simpletest/simpletest.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/simpletest/simpletest.pages.inc	2011-06-30 09:24:40.347310755 -0400
+@@ -390,7 +390,7 @@
+     ->condition('test_id', $test_id)
+     ->orderBy('test_class')
+     ->orderBy('message_id')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $test_results = array();
+   foreach ($results as $result) {
+diff -uNr drupal-7.4.org/modules/simpletest/tests/actions.test drupal-7.4/modules/simpletest/tests/actions.test
+--- drupal-7.4.org/modules/simpletest/tests/actions.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/simpletest/tests/actions.test	2011-06-30 09:24:40.348823964 -0400
+@@ -115,7 +115,7 @@
+     }
+     $expected[] = 'Stack overflow: too many calls to actions_do(). Aborting to prevent infinite recursion.';
+ 
+-    $result = db_query("SELECT message FROM {watchdog} WHERE type = 'actions_loop_test' OR type = 'actions' ORDER BY wid");
++    $result = db_query("SELECT message FROM {watchdog} WHERE type = 'actions_loop_test' OR type = 'actions' ORDER BY wid")->fetchAll(PDO::FETCH_OBJ);
+     $loop_started = FALSE;
+     foreach ($result as $row) {
+       $expected_message = array_shift($expected);
+diff -uNr drupal-7.4.org/modules/simpletest/tests/database_test.module drupal-7.4/modules/simpletest/tests/database_test.module
+--- drupal-7.4.org/modules/simpletest/tests/database_test.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/simpletest/tests/database_test.module	2011-06-30 09:24:40.350323209 -0400
+@@ -217,7 +217,7 @@
+     ->limit(50)
+     ->orderByHeader($header)
+     ->setCountQuery($count_query);
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $options = array();
+ 
+diff -uNr drupal-7.4.org/modules/simpletest/tests/database_test.test drupal-7.4/modules/simpletest/tests/database_test.test
+--- drupal-7.4.org/modules/simpletest/tests/database_test.test	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/simpletest/tests/database_test.test	2011-06-30 09:24:40.355266815 -0400
+@@ -303,7 +303,7 @@
+     $records = array();
+     $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25));
+     $this->assertTrue($result instanceof DatabaseStatementInterface, t('Result set is a Drupal statement object.'));
+-    foreach ($result as $record) {
++    foreach ($result->fetchAll(PDO::FETCH_OBJ) as $record) {
+       $records[] = $record;
+       $this->assertTrue(is_object($record), t('Record is an object.'));
+       $this->assertIdentical($record->name, 'John', t('25 year old is John.'));
+@@ -317,7 +317,7 @@
+    */
+   function testQueryFetchObject() {
+     $records = array();
+-    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_OBJ));
++    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_OBJ))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $records[] = $record;
+       $this->assertTrue(is_object($record), t('Record is an object.'));
+@@ -332,7 +332,7 @@
+    */
+   function testQueryFetchArray() {
+     $records = array();
+-    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_ASSOC));
++    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($result as $record) {
+       $records[] = $record;
+       if ($this->assertTrue(is_array($record), t('Record is an array.'))) {
+@@ -350,7 +350,7 @@
+    */
+   function testQueryFetchClass() {
+     $records = array();
+-    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => 'FakeRecord'));
++    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => 'FakeRecord'))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $records[] = $record;
+       if ($this->assertTrue($record instanceof FakeRecord, t('Record is an object of class FakeRecord.'))) {
+@@ -384,7 +384,7 @@
+   // Confirm that we can fetch a record into an indexed array explicitly.
+   function testQueryFetchNum() {
+     $records = array();
+-    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_NUM));
++    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_NUM))->fetchAll(PDO::FETCH_NUM);
+     foreach ($result as $record) {
+       $records[] = $record;
+       if ($this->assertTrue(is_array($record), t('Record is an array.'))) {
+@@ -400,7 +400,7 @@
+    */
+   function testQueryFetchBoth() {
+     $records = array();
+-    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_BOTH));
++    $result = db_query('SELECT name FROM {test} WHERE age = :age', array(':age' => 25), array('fetch' => PDO::FETCH_BOTH))->fetchAll(PDO::FETCH_BOTH);
+     foreach ($result as $record) {
+       $records[] = $record;
+       if ($this->assertTrue(is_array($record), t('Record is an array.'))) {
+@@ -421,7 +421,7 @@
+     $column = $result->fetchCol();
+     $this->assertIdentical(count($column), 3, t('fetchCol() returns the right number of records.'));
+ 
+-    $result = db_query('SELECT name FROM {test} WHERE age > :age', array(':age' => 25));
++    $result = db_query('SELECT name FROM {test} WHERE age > :age', array(':age' => 25))->fetchAll(PDO::FETCH_OBJ);
+     $i = 0;
+     foreach ($result as $record) {
+       $this->assertIdentical($record->name, $column[$i++], t('Column matches direct accesss.'));
+@@ -1293,7 +1293,7 @@
+     $query = db_select('test');
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+@@ -1310,7 +1310,7 @@
+     $query = db_select('test')->comment('Testing query comments');
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+@@ -1331,7 +1331,7 @@
+     $query = db_select('test')->comment('Testing query comments */ SELECT nid FROM {node}; --');
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+@@ -1802,7 +1802,7 @@
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+     $query->orderBy($age_field);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_age = 0;
+@@ -1854,7 +1854,7 @@
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+     $query->orderBy($age_field, 'DESC');
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_age = 100000000;
+@@ -1892,7 +1892,7 @@
+     $priority_field = $query->addField('t', 'priority', 'priority');
+ 
+     $query->orderBy($priority_field);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_priority = 0;
+@@ -1917,7 +1917,7 @@
+     $priority_field = $query->addField($people_alias, 'priority', 'priority');
+ 
+     $query->orderBy($name_field);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_name = 0;
+@@ -1940,7 +1940,7 @@
+     $task_field = $query->addField('t', 'task');
+     $query->orderBy($count_field);
+     $query->groupBy($task_field);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_count = 0;
+@@ -1977,7 +1977,7 @@
+     $query->orderBy($count_field);
+     $query->groupBy($task_field);
+     $query->having('COUNT(task) >= 2');
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     $last_count = 0;
+@@ -2009,7 +2009,7 @@
+     $name_field = $query->addField('test', 'name');
+     $age_field = $query->addField('test', 'age', 'age');
+     $query->range(0, 2);
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+@@ -2026,7 +2026,7 @@
+     $query = db_select('test_task');
+     $task_field = $query->addField('test_task', 'task');
+     $query->distinct();
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+@@ -2578,7 +2578,7 @@
+     $query->addField('test', 'age', 'age');
+     $query->addTag('database_test_alter_add_range');
+ 
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     $num_records = 0;
+     foreach ($result as $record) {
+diff -uNr drupal-7.4.org/modules/statistics/statistics.admin.inc drupal-7.4/modules/statistics/statistics.admin.inc
+--- drupal-7.4.org/modules/statistics/statistics.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/statistics/statistics.admin.inc	2011-06-30 09:24:40.357311122 -0400
+@@ -24,7 +24,7 @@
+     ->limit(30)
+     ->orderByHeader($header);
+ 
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   $rows = array();
+   foreach ($result as $log) {
+     $rows[] = array(
+@@ -72,7 +72,7 @@
+   $count_query->addExpression('COUNT(DISTINCT path)');
+   $query->setCountQuery($count_query);
+ 
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   $rows = array();
+   foreach ($result as $page) {
+     $rows[] = array($page->hits, _statistics_format_item($page->title, $page->path), t('%time ms', array('%time' => round($page->average_time))), format_interval(round($page->total_time / 1000)));
+@@ -123,7 +123,7 @@
+   $count_query->addExpression('COUNT(*)');
+   $query->setCountQuery($count_query);
+ 
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   $rows = array();
+   $destination = drupal_get_destination();
+   foreach ($result as $account) {
+@@ -172,7 +172,7 @@
+     ->condition('url', '', '<>');
+   $query->setCountQuery($count_query);
+ 
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+   $rows = array();
+   foreach ($result as $referrer) {
+     $rows[] = array($referrer->hits, _statistics_link($referrer->url), t('@time ago', array('@time' => format_interval(REQUEST_TIME - $referrer->last))));
+diff -uNr drupal-7.4.org/modules/statistics/statistics.module drupal-7.4/modules/statistics/statistics.module
+--- drupal-7.4.org/modules/statistics/statistics.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/statistics/statistics.module	2011-06-30 09:24:40.358314288 -0400
+@@ -275,7 +275,7 @@
+       ->condition('n.status', 1)
+       ->orderBy($dbfield, 'DESC')
+       ->range(0, $dbrows)
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_OBJ);
+   }
+   return FALSE;
+ }
+diff -uNr drupal-7.4.org/modules/statistics/statistics.pages.inc drupal-7.4/modules/statistics/statistics.pages.inc
+--- drupal-7.4.org/modules/statistics/statistics.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/statistics/statistics.pages.inc	2011-06-30 09:24:40.359313087 -0400
+@@ -26,7 +26,7 @@
+       ->limit(30)
+       ->orderByHeader($header);
+ 
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+     $rows = array();
+     foreach ($result as $log) {
+       $rows[] = array(
+@@ -66,7 +66,7 @@
+       ->limit(30)
+       ->orderByHeader($header);
+ 
+-    $result = $query->execute();
++    $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+     $rows = array();
+     foreach ($result as $log) {
+       $rows[] = array(
+diff -uNr drupal-7.4.org/modules/system/system.admin.inc drupal-7.4/modules/system/system.admin.inc
+--- drupal-7.4.org/modules/system/system.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/system/system.admin.inc	2011-06-30 09:24:40.363252919 -0400
+@@ -19,7 +19,7 @@
+       SELECT m.*, ml.*
+       FROM {menu_links} ml
+       INNER JOIN {menu_router} m ON ml.router_path = m.path
+-      WHERE ml.link_path != 'admin/help' AND menu_name = :menu_name AND ml.plid = :mlid AND hidden = 0", $admin, array('fetch' => PDO::FETCH_ASSOC));
++      WHERE ml.link_path != 'admin/help' AND menu_name = :menu_name AND ml.plid = :mlid AND hidden = 0", $admin, array('fetch' => PDO::FETCH_ASSOC))->fetchAll(PDO::FETCH_ASSOC);
+     foreach ($result as $item) {
+       _menu_link_translate($item);
+       if (!$item['access']) {
+@@ -1347,7 +1347,7 @@
+ function system_ip_blocking($default_ip = '') {
+   $rows = array();
+   $header = array(t('Blocked IP addresses'), t('Operations'));
+-  $result = db_query('SELECT * FROM {blocked_ips}');
++  $result = db_query('SELECT * FROM {blocked_ips}')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $ip) {
+     $rows[] = array(
+       $ip->ip,
+@@ -1400,7 +1400,11 @@
+   elseif ($ip == ip_address()) {
+     form_set_error('ip', t('You may not block your own IP address.'));
+   }
+-  elseif (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_RES_RANGE) == FALSE) {
++  elseif (preg_match('~\.hiphop$~', PHP_VERSION) && preg_match('~^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$~', $ip) == FALSE) {
++    //this is a facebook's HipHop for PHP mode
++    form_set_error('ip', t('Enter a valid IP address.'));
++  }
++  elseif (!preg_match('~\.hiphop$~', PHP_VERSION) && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_RES_RANGE) == FALSE) {
+     form_set_error('ip', t('Enter a valid IP address.'));
+   }
+ }
+@@ -2890,7 +2894,7 @@
+     ->fields('actions')
+     ->limit(50)
+     ->orderByHeader($header)
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $action) {
+     $row[] = array(
+diff -uNr drupal-7.4.org/modules/system/system.api.php drupal-7.4/modules/system/system.api.php
+--- drupal-7.4.org/modules/system/system.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/system/system.api.php	2011-06-30 09:24:40.368264573 -0400
+@@ -547,7 +547,7 @@
+   $result = db_query('SELECT * FROM {aggregator_feed} WHERE checked + refresh < :time AND refresh != :never', array(
+     ':time' => REQUEST_TIME,
+     ':never' => AGGREGATOR_CLEAR_NEVER,
+-  ));
++  ))->fetchAll(PDO::FETCH_OBJ);
+   $queue = DrupalQueue::get('aggregator_feeds');
+   foreach ($result as $feed) {
+     $queue->createItem($feed);
+@@ -2694,7 +2694,7 @@
+   if (!file_prepare_directory($uri)) {
+     $uri = FALSE;
+   }
+-  $result = db_query("SELECT f.* FROM {file_managed} f INNER JOIN {upload} u ON f.fid = u.fid WHERE uri = :uri", array('uri' => $uri));
++  $result = db_query("SELECT f.* FROM {file_managed} f INNER JOIN {upload} u ON f.fid = u.fid WHERE uri = :uri", array('uri' => $uri))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $file) {
+     if (!user_access('view uploaded files')) {
+       return -1;
+@@ -3166,7 +3166,7 @@
+     ->condition('uid', $sandbox['current_uid'], '>')
+     ->range(0, 3)
+     ->orderBy('uid', 'ASC')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($users as $user) {
+     $user->name .= '!';
+diff -uNr drupal-7.4.org/modules/system/system.install drupal-7.4/modules/system/system.install
+--- drupal-7.4.org/modules/system/system.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/system/system.install	2011-06-30 09:24:40.371259286 -0400
+@@ -125,6 +125,10 @@
+     'SPL',
+     'xml',
+   );
++  if (preg_match('~\.hiphop$~', PHP_VERSION)) {
++    // this is a Facebook's HipHop mode
++    unset($required_extensions[2]);
++  }
+   foreach ($required_extensions as $extension) {
+     if (!extension_loaded($extension)) {
+       $missing_extensions[] = $extension;
+@@ -1699,7 +1703,7 @@
+  * Rename blog and forum permissions to be consistent with other content types.
+  */
+ function system_update_7000() {
+-  $result = db_query("SELECT rid, perm FROM {permission} ORDER BY rid");
++  $result = db_query("SELECT rid, perm FROM {permission} ORDER BY rid")->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $role) {
+     $renamed_permission = preg_replace('/(?<=^|,\ )create\ blog\ entries(?=,|$)/', 'create blog content', $role->perm);
+     $renamed_permission = preg_replace('/(?<=^|,\ )edit\ own\ blog\ entries(?=,|$)/', 'edit own blog content', $role->perm);
+@@ -1768,7 +1772,7 @@
+   $result = db_query("SELECT mask FROM {access} WHERE status = :status AND type = :type", array(
+     ':status' => 0,
+     ':type' => $type,
+-  ));
++  ))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $blocked) {
+     if (filter_var($blocked->mask, FILTER_VALIDATE_IP, FILTER_FLAG_NO_RES_RANGE) !== FALSE) {
+       db_insert('blocked_ips')
+@@ -1788,7 +1792,7 @@
+     $result = db_query("SELECT mask FROM {access} WHERE status = :status AND type = :type", array(
+       ':status' => 1,
+       ':type' => $type,
+-    ));
++    ))->fetchAll(PDO::FETCH_OBJ);
+     $or = db_condition('or');
+     foreach ($result as $allowed) {
+       $or->condition('ip', $allowed->mask, 'LIKE');
+@@ -1873,7 +1877,7 @@
+ function system_update_7007() {
+   // Copy the permissions from the old {permission} table to the new {role_permission} table.
+   $messages = array();
+-  $result = db_query("SELECT rid, perm FROM {permission} ORDER BY rid ASC");
++  $result = db_query("SELECT rid, perm FROM {permission} ORDER BY rid ASC")->fetchAll(PDO::FETCH_OBJ);
+   $query = db_insert('role_permission')->fields(array('rid', 'permission'));
+   foreach ($result as $role) {
+     foreach (explode(', ', $role->perm) as $perm) {
+@@ -2012,7 +2016,7 @@
+                         FROM pg_catalog.pg_attribute a
+                         LEFT JOIN pg_class c ON (c.oid =  a.attrelid)
+                         WHERE pg_catalog.pg_table_is_visible(c.oid) AND c.relkind = 'r'
+-                        AND pg_catalog.format_type(a.atttypid, a.atttypmod) LIKE '%unsigned%'");
++                        AND pg_catalog.format_type(a.atttypid, a.atttypmod) LIKE '%unsigned%'")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $row) {
+       switch ($row->type) {
+         case 'smallint_unsigned':
+@@ -2387,7 +2391,7 @@
+   block_flush_caches();
+ 
+   // Show the new menu blocks along the navigation block.
+-  $blocks = db_query("SELECT theme, status, region, weight, visibility, pages FROM {block} WHERE module = 'system' AND delta = 'navigation'");
++  $blocks = db_query("SELECT theme, status, region, weight, visibility, pages FROM {block} WHERE module = 'system' AND delta = 'navigation'")->fetchAll(PDO::FETCH_OBJ);
+   $deltas = db_or()
+     ->condition('delta', 'user-menu')
+     ->condition('delta', 'management');
+@@ -2614,7 +2618,7 @@
+   // may have had attachments disabled after files were uploaded. Look for
+   // any other node types referenced by the upload records and add those to
+   // the list. The admin can always remove the field later.
+-  $results = db_query('SELECT DISTINCT type FROM {node} n INNER JOIN {node_revision} nr ON n.nid = nr.nid INNER JOIN {upload} u ON nr.vid = u.vid');
++  $results = db_query('SELECT DISTINCT type FROM {node} n INNER JOIN {node_revision} nr ON n.nid = nr.nid INNER JOIN {upload} u ON nr.vid = u.vid')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($results as $row) {
+     if (!isset($context['types'][$row->type])) {
+       drupal_set_message(t('The content type %rowtype had uploads disabled but contained uploaded file data. Uploads have been re-enabled to migrate the existing data. You may delete the "File attachments" field in the %rowtype type if this data is not necessary.', array('%rowtype' => $row->type)));
+@@ -2752,7 +2756,7 @@
+   // Retrieve information on all the files attached to these revisions.
+   if (!empty($vids)) {
+     $node_revisions = array();
+-    $result = db_query('SELECT u.fid, u.vid, u.list, u.description, n.nid, n.type, u.weight FROM {upload} u INNER JOIN {node_revision} nr ON u.vid = nr.vid INNER JOIN {node} n ON n.nid = nr.nid WHERE u.vid IN (:vids) ORDER BY u.vid, u.weight, u.fid', array(':vids' => $vids));
++    $result = db_query('SELECT u.fid, u.vid, u.list, u.description, n.nid, n.type, u.weight FROM {upload} u INNER JOIN {node_revision} nr ON u.vid = nr.vid INNER JOIN {node} n ON n.nid = nr.nid WHERE u.vid IN (:vids) ORDER BY u.vid, u.weight, u.fid', array(':vids' => $vids))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       // For each uploaded file, retrieve the corresponding data from the old
+       // files table (since upload doesn't know about the new entry in the
+@@ -2859,7 +2863,7 @@
+   // For router items where 'type' => MENU_CALLBACK, {menu_router}.type is
+   // stored as 4 in Drupal 6, and 0 in Drupal 7. Fortunately Drupal 7 doesn't
+   // store any types as 4, so delete both.
+-  $result = db_query('SELECT ml.mlid FROM {menu_links} ml INNER JOIN {menu_router} mr ON ml.router_path = mr.path WHERE ml.module = :system AND ml.customized = 0 AND mr.type IN(:callbacks)', array(':callbacks' => array(0, 4), ':system' => 'system'));
++  $result = db_query('SELECT ml.mlid FROM {menu_links} ml INNER JOIN {menu_router} mr ON ml.router_path = mr.path WHERE ml.module = :system AND ml.customized = 0 AND mr.type IN(:callbacks)', array(':callbacks' => array(0, 4), ':system' => 'system'))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     db_delete('menu_links')->condition('mlid', $record->mlid)->execute();
+   }
+diff -uNr drupal-7.4.org/modules/system/system.module drupal-7.4/modules/system/system.module
+--- drupal-7.4.org/modules/system/system.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/system/system.module	2011-06-30 09:24:40.499248061 -0400
+@@ -2108,7 +2108,7 @@
+     ->condition('ml.menu_name', $item['menu_name'])
+     ->condition('ml.hidden', 0);
+ 
+-  foreach ($query->execute() as $link) {
++  foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $link) {
+     _menu_link_translate($link);
+     if ($link['access']) {
+       // The link description, either derived from 'description' in
+@@ -2178,7 +2178,7 @@
+  */
+ function system_get_files_database(&$files, $type) {
+   // Extract current files from database.
+-  $result = db_query("SELECT filename, name, type, status, schema_version, weight FROM {system} WHERE type = :type", array(':type' => $type));
++  $result = db_query("SELECT filename, name, type, status, schema_version, weight FROM {system} WHERE type = :type", array(':type' => $type))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $file) {
+     if (isset($files[$file->name]) && is_object($files[$file->name])) {
+       $file->uri = $file->filename;
+@@ -2200,7 +2200,7 @@
+  *   The type of the files.
+  */
+ function system_update_files_database(&$files, $type) {
+-  $result = db_query("SELECT * FROM {system} WHERE type = :type", array(':type' => $type));
++  $result = db_query("SELECT * FROM {system} WHERE type = :type", array(':type' => $type))->fetchAll(PDO::FETCH_OBJ);
+ 
+   // Add all files that need to be deleted to a DatabaseCondition.
+   $delete = db_or();
+@@ -2906,7 +2906,7 @@
+       ->condition('ml.module', 'system')
+       ->condition('m.number_parts', 1, '>')
+       ->condition('m.page_callback', 'system_admin_menu_block_page', '!=');
+-    foreach ($query->execute() as $link) {
++    foreach ($query->execute()->fetchAll(PDO::FETCH_ASSOC) as $link) {
+       _menu_link_translate($link);
+       if ($link['access']) {
+         $links[$link['router_path']] = $link;
+@@ -2982,7 +2982,7 @@
+   $result = db_query('SELECT fid FROM {file_managed} WHERE status <> :permanent AND timestamp < :timestamp', array(
+     ':permanent' => FILE_STATUS_PERMANENT,
+     ':timestamp' => REQUEST_TIME - DRUPAL_MAXIMUM_TEMP_FILE_AGE
+-  ));
++  ))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $row) {
+     if ($file = file_load($row->fid)) {
+       $references = file_usage_list($file);
+@@ -3609,7 +3609,7 @@
+ 
+   if (empty($formats)) {
+     $formats = array();
+-    $result = db_query("SELECT format, type, language FROM {date_format_locale}");
++    $result = db_query("SELECT format, type, language FROM {date_format_locale}")->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       if (!isset($formats[$record->language])) {
+         $formats[$record->language] = array();
+@@ -3664,7 +3664,7 @@
+   }
+ 
+   // Get custom formats added to the database by the end user.
+-  $result = db_query('SELECT dft.type, dft.title, dft.locked FROM {date_format_type} dft ORDER BY dft.title');
++  $result = db_query('SELECT dft.type, dft.title, dft.locked FROM {date_format_type} dft ORDER BY dft.title')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     if (!isset($types[$record->type])) {
+       $type = array();
+@@ -3746,7 +3746,7 @@
+   }
+ 
+   // Get custom formats added to the database by the end user.
+-  $result = db_query('SELECT df.dfid, df.format, df.type, df.locked, dfl.language FROM {date_formats} df LEFT JOIN {date_format_type} dft ON df.type = dft.type LEFT JOIN {date_format_locale} dfl ON df.format = dfl.format AND df.type = dfl.type ORDER BY df.type, df.format');
++  $result = db_query('SELECT df.dfid, df.format, df.type, df.locked, dfl.language FROM {date_formats} df LEFT JOIN {date_format_type} dft ON df.type = dft.type LEFT JOIN {date_format_locale} dfl ON df.format = dfl.format AND df.type = dfl.type ORDER BY df.type, df.format')->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     // If this date type isn't set, initialise the array.
+     if (!isset($date_formats[$record->type])) {
+diff -uNr drupal-7.4.org/modules/system/system.tar.inc drupal-7.4/modules/system/system.tar.inc
+--- drupal-7.4.org/modules/system/system.tar.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/system/system.tar.inc	2011-06-30 09:24:40.509251452 -0400
+@@ -592,7 +592,7 @@
+         }
+ 
+         // ----- Get the arguments
+-        $v_att_list = &func_get_args();
++        $v_att_list = func_get_args();
+ 
+         // ----- Read the attributes
+         $i=0;
+diff -uNr drupal-7.4.org/modules/taxonomy/taxonomy.api.php drupal-7.4/modules/taxonomy/taxonomy.api.php
+--- drupal-7.4.org/modules/taxonomy/taxonomy.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/taxonomy/taxonomy.api.php	2011-06-30 09:24:40.511260152 -0400
+@@ -101,7 +101,7 @@
+  *   An array of term objects, indexed by tid.
+  */
+ function hook_taxonomy_term_load($terms) {
+-  $result = db_query('SELECT tid, foo FROM {mytable} WHERE tid IN (:tids)', array(':tids' => array_keys($terms)));
++  $result = db_query('SELECT tid, foo FROM {mytable} WHERE tid IN (:tids)', array(':tids' => array_keys($terms)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $terms[$record->tid]->foo = $record->foo;
+   }
+diff -uNr drupal-7.4.org/modules/taxonomy/taxonomy.install drupal-7.4/modules/taxonomy/taxonomy.install
+--- drupal-7.4.org/modules/taxonomy/taxonomy.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/taxonomy/taxonomy.install	2011-06-30 09:24:40.513476022 -0400
+@@ -395,7 +395,7 @@
+ 
+   // Use an inline version of Drupal 6 taxonomy_get_vocabularies() here since
+   // we can no longer rely on $vocabulary->nodes from the API function.
+-  $result = db_query('SELECT v.*, n.type FROM {taxonomy_vocabulary} v LEFT JOIN {taxonomy_vocabulary_node_type} n ON v.vid = n.vid ORDER BY v.weight, v.name');
++  $result = db_query('SELECT v.*, n.type FROM {taxonomy_vocabulary} v LEFT JOIN {taxonomy_vocabulary_node_type} n ON v.vid = n.vid ORDER BY v.weight, v.name')->fetchAll(PDO::FETCH_OBJ);
+   $vocabularies = array();
+   foreach ($result as $record) {
+     // If no node types are associated with a vocabulary, the LEFT JOIN will
+@@ -571,7 +571,7 @@
+   // of term references stored so far for the current revision, which
+   // provides the delta value for each term reference data insert. The
+   // deltas are reset for each new revision.
+-  
++
+   $conditions = array(
+     'type' => 'taxonomy_term_reference',
+     'deleted' => 0,
+@@ -592,7 +592,7 @@
+ 
+     // Use an inline version of Drupal 6 taxonomy_get_vocabularies() here since
+     // we can no longer rely on $vocabulary->nodes from the API function.
+-    $result = db_query('SELECT v.vid, v.machine_name, n.type FROM {taxonomy_vocabulary} v INNER JOIN {taxonomy_vocabulary_node_type} n ON v.vid = n.vid');
++    $result = db_query('SELECT v.vid, v.machine_name, n.type FROM {taxonomy_vocabulary} v INNER JOIN {taxonomy_vocabulary_node_type} n ON v.vid = n.vid')->fetchAll(PDO::FETCH_OBJ);
+     $vocabularies = array();
+     foreach ($result as $record) {
+ 
+@@ -635,7 +635,7 @@
+     // unique. Unfortunately it also happens to be in the wrong order which is
+     // less efficient, but c'est la vie.
+     $query = 'SELECT td.vid AS vocab_id, td.tid, tn.nid, tn.vid, n.type, n2.created, n2.sticky, n2.nid AS is_current FROM {taxonomy_term_data} td INNER JOIN {taxonomy_term_node} tn ON td.tid = tn.tid INNER JOIN {node} n ON tn.nid = n.nid LEFT JOIN {node} n2 ON tn.vid = n2.vid ORDER BY tn.vid, td.weight ASC, tn.tid';
+-    $result = db_query_range($query, $sandbox['last'], $batch);
++    $result = db_query_range($query, $sandbox['last'], $batch)->fetchAll(PDO::FETCH_OBJ);
+     if (isset($sandbox['cursor'])) {
+       $values = $sandbox['cursor']['values'];
+       $deltas = $sandbox['cursor']['deltas'];
+diff -uNr drupal-7.4.org/modules/taxonomy/taxonomy.module drupal-7.4/modules/taxonomy/taxonomy.module
+--- drupal-7.4.org/modules/taxonomy/taxonomy.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/taxonomy/taxonomy.module	2011-06-30 09:24:40.608339704 -0400
+@@ -946,7 +946,7 @@
+       ->condition('t.vid', $vid)
+       ->orderBy('t.weight')
+       ->orderBy('t.name')
+-      ->execute();
++      ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+     foreach ($result as $term) {
+       $children[$vid][$term->parent][] = $term->tid;
+diff -uNr drupal-7.4.org/modules/tracker/tracker.module drupal-7.4/modules/tracker/tracker.module
+--- drupal-7.4.org/modules/tracker/tracker.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/tracker/tracker.module	2011-06-30 09:24:40.610252452 -0400
+@@ -76,7 +76,7 @@
+   $batch_size = variable_get('tracker_batch_size', 1000);
+   if ($max_nid > 0) {
+     $last_nid = FALSE;
+-    $result = db_query_range('SELECT nid, uid, status FROM {node} WHERE nid <= :max_nid ORDER BY nid DESC', 0, $batch_size, array(':max_nid' => $max_nid), array('target' => 'slave'));
++    $result = db_query_range('SELECT nid, uid, status FROM {node} WHERE nid <= :max_nid ORDER BY nid DESC', 0, $batch_size, array(':max_nid' => $max_nid), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+ 
+     $count = 0;
+ 
+diff -uNr drupal-7.4.org/modules/tracker/tracker.pages.inc drupal-7.4/modules/tracker/tracker.pages.inc
+--- drupal-7.4.org/modules/tracker/tracker.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/tracker/tracker.pages.inc	2011-06-30 09:24:40.611254783 -0400
+@@ -39,7 +39,7 @@
+   $rows = array();
+   if (!empty($nodes)) {
+     // Now, get the data and put into the placeholder array
+-    $result = db_query('SELECT n.nid, n.title, n.type, n.changed, n.uid, u.name, l.comment_count FROM {node} n INNER JOIN {node_comment_statistics} l ON n.nid = l.nid INNER JOIN {users} u ON n.uid = u.uid WHERE n.nid IN (:nids)', array(':nids' => array_keys($nodes)), array('target' => 'slave'));
++    $result = db_query('SELECT n.nid, n.title, n.type, n.changed, n.uid, u.name, l.comment_count FROM {node} n INNER JOIN {node_comment_statistics} l ON n.nid = l.nid INNER JOIN {users} u ON n.uid = u.uid WHERE n.nid IN (:nids)', array(':nids' => array_keys($nodes)), array('target' => 'slave'))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $node) {
+       $node->last_activity = $nodes[$node->nid]->changed;
+       $nodes[$node->nid] = $node;
+diff -uNr drupal-7.4.org/modules/translation/translation.module drupal-7.4/modules/translation/translation.module
+--- drupal-7.4.org/modules/translation/translation.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/translation/translation.module	2011-06-30 09:24:40.625284233 -0400
+@@ -454,7 +454,7 @@
+         ->fields('n', array('nid', 'type', 'uid', 'status', 'title', 'language'))
+         ->condition('n.tnid', $tnid)
+         ->addTag('node_access')
+-        ->execute();
++        ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+       foreach ($result as $node) {
+         $translations[$tnid][$node->language] = $node;
+diff -uNr drupal-7.4.org/modules/trigger/trigger.install drupal-7.4/modules/trigger/trigger.install
+--- drupal-7.4.org/modules/trigger/trigger.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/trigger/trigger.install	2011-06-30 09:24:40.626299325 -0400
+@@ -56,7 +56,7 @@
+  * Adds operation names to the hook names and drops the "op" field.
+  */
+ function trigger_update_7000() {
+-  $result = db_query("SELECT hook, op, aid FROM {trigger_assignments} WHERE op <> ''");
++  $result = db_query("SELECT hook, op, aid FROM {trigger_assignments} WHERE op <> ''")->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $record) {
+     db_update('trigger_assignments')
+diff -uNr drupal-7.4.org/modules/update/update.module drupal-7.4/modules/update/update.module
+--- drupal-7.4.org/modules/update/update.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/update/update.module	2011-06-30 09:24:40.628343429 -0400
+@@ -792,7 +792,7 @@
+   $result = db_select('cache_update')
+     ->fields('cache_update', array('cid', 'data', 'created', 'expire', 'serialized'))
+     ->condition('cache_update.cid', $cid_prefix . '::%', 'LIKE')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $cache) {
+     if ($cache) {
+       if ($cache->serialized) {
+diff -uNr drupal-7.4.org/modules/user/user.admin.inc drupal-7.4/modules/user/user.admin.inc
+--- drupal-7.4.org/modules/user/user.admin.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/user/user.admin.inc	2011-06-30 09:24:40.632780503 -0400
+@@ -169,7 +169,7 @@
+     ->limit(50)
+     ->orderByHeader($header)
+     ->setCountQuery($count_query);
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $form['options'] = array(
+     '#type' => 'fieldset',
+@@ -200,7 +200,7 @@
+   $accounts = array();
+   foreach ($result as $account) {
+     $users_roles = array();
+-    $roles_result = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $account->uid));
++    $roles_result = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $account->uid))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($roles_result as $user_role) {
+       $users_roles[] = $roles[$user_role->rid];
+     }
+diff -uNr drupal-7.4.org/modules/user/user.api.php drupal-7.4/modules/user/user.api.php
+--- drupal-7.4.org/modules/user/user.api.php	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/user/user.api.php	2011-06-30 09:24:40.634553363 -0400
+@@ -24,7 +24,7 @@
+  * @see profile_user_load()
+  */
+ function hook_user_load($users) {
+-  $result = db_query('SELECT uid, foo FROM {my_table} WHERE uid IN (:uids)', array(':uids' => array_keys($users)));
++  $result = db_query('SELECT uid, foo FROM {my_table} WHERE uid IN (:uids)', array(':uids' => array_keys($users)))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $record) {
+     $users[$record->uid]->foo = $record->foo;
+   }
+diff -uNr drupal-7.4.org/modules/user/user.install drupal-7.4/modules/user/user.install
+--- drupal-7.4.org/modules/user/user.install	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/user/user.install	2011-06-30 09:32:48.780576493 -0400
+@@ -418,7 +418,7 @@
+     $has_rows = FALSE;
+     // Update this many per page load.
+     $count = 1000;
+-    $result = db_query_range("SELECT uid, pass FROM {users} WHERE uid > 0 ORDER BY uid", $sandbox['user_from'], $count);
++    $result = db_query_range("SELECT uid, pass FROM {users} WHERE uid > 0 ORDER BY uid", $sandbox['user_from'], $count)->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $account) {
+       $has_rows = TRUE;
+       $new_hash = user_hash_password($account->pass, $hash_count_log2);
+@@ -472,7 +472,7 @@
+     $contributed_date_module = db_field_exists('users', 'timezone_name');
+     $contributed_event_module = db_field_exists('users', 'timezone_id');
+ 
+-    $results = db_query_range("SELECT uid FROM {users} ORDER BY uid", $sandbox['user_from'], $count);
++    $results = db_query_range("SELECT uid FROM {users} ORDER BY uid", $sandbox['user_from'], $count)->fetchAll(PDO::FETCH_OBJ);
+     foreach ($results as $account) {
+       $timezone = NULL;
+       // If the contributed Date module has created a users.timezone_name
+@@ -722,7 +722,7 @@
+   // As a batch operation move the photos into the {file_managed} table and
+   // update the {users} records.
+   $limit = 500;
+-  $result = db_query_range("SELECT uid, picture FROM {users} WHERE picture <> '' AND uid > :uid ORDER BY uid", 0, $limit, array(':uid' => $sandbox['last_user_processed']));
++  $result = db_query_range("SELECT uid, picture FROM {users} WHERE picture <> '' AND uid > :uid ORDER BY uid", 0, $limit, array(':uid' => $sandbox['last_user_processed']))->fetchAll(PDO::FETCH_OBJ);
+   foreach ($result as $user) {
+     // Don't bother adding files that don't exist.
+     if (file_exists($user->picture)) {
+@@ -863,7 +863,7 @@
+   $result = db_select('variable', 'v')
+     ->fields('v', array('name'))
+     ->condition('name', db_like('user_mail_') . '%', 'LIKE')
+-    ->execute();
++    ->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   foreach ($result as $row) {
+     // Use variable_get() to get the unserialized value for free.
+diff -uNr drupal-7.4.org/modules/user/user.module drupal-7.4/modules/user/user.module
+--- drupal-7.4.org/modules/user/user.module	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/user/user.module	2011-06-30 09:24:40.644511678 -0400
+@@ -295,7 +295,7 @@
+     }
+ 
+     // Add any additional roles from the database.
+-    $result = db_query('SELECT r.rid, r.name, ur.uid FROM {role} r INNER JOIN {users_roles} ur ON ur.rid = r.rid WHERE ur.uid IN (:uids)', array(':uids' => array_keys($queried_users)));
++    $result = db_query('SELECT r.rid, r.name, ur.uid FROM {role} r INNER JOIN {users_roles} ur ON ur.rid = r.rid WHERE ur.uid IN (:uids)', array(':uids' => array_keys($queried_users)))->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $record) {
+       $queried_users[$record->uid]->roles[$record->rid] = $record->name;
+     }
+@@ -733,7 +733,7 @@
+     if ($fetch) {
+       // Get from the database permissions that were not in the static variable.
+       // Only role IDs with at least one permission assigned will return rows.
+-      $result = db_query("SELECT rid, permission FROM {role_permission} WHERE rid IN (:fetch)", array(':fetch' => $fetch));
++      $result = db_query("SELECT rid, permission FROM {role_permission} WHERE rid IN (:fetch)", array(':fetch' => $fetch))->fetchAll(PDO::FETCH_OBJ);
+ 
+       foreach ($result as $row) {
+         $cache[$row->rid][$row->permission] = TRUE;
+@@ -2757,7 +2757,7 @@
+     $query->innerJoin('role_permission', 'p', 'r.rid = p.rid');
+     $query->condition('p.permission', $permission);
+   }
+-  $result = $query->execute();
++  $result = $query->execute()->fetchAll(PDO::FETCH_OBJ);
+ 
+   $roles = array();
+   foreach ($result as $role) {
+diff -uNr drupal-7.4.org/modules/user/user.pages.inc drupal-7.4/modules/user/user.pages.inc
+--- drupal-7.4.org/modules/user/user.pages.inc	2011-06-29 21:20:10.000000000 -0400
++++ drupal-7.4/modules/user/user.pages.inc	2011-06-30 09:24:40.645508792 -0400
+@@ -11,7 +11,7 @@
+ function user_autocomplete($string = '') {
+   $matches = array();
+   if ($string) {
+-    $result = db_select('users')->fields('users', array('name'))->condition('name', db_like($string) . '%', 'LIKE')->range(0, 10)->execute();
++    $result = db_select('users')->fields('users', array('name'))->condition('name', db_like($string) . '%', 'LIKE')->range(0, 10)->execute()->fetchAll(PDO::FETCH_OBJ);
+     foreach ($result as $user) {
+       $matches[$user->name] = check_plain($user->name);
+     }
